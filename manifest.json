@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "EasyRegister Master Refactor",
+  "version": "3.0.0",
+  "description": "7-layer Monolithic EasyRegister with AI Cleaning",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://jp.mercari.com/*",
+    "https://*.mercari.com/*",
+    "https://database-app-6ms4.onrender.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://jp.mercari.com/*",
+        "https://*.mercari.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
