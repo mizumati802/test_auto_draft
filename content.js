@@ -298,7 +298,7 @@
         padding: 6px 8px; border-radius: 4px; font-size: 15px; outline: none;
         box-sizing: border-box;
       }
-      .ve-input:focus, .ve-textarea:focus { border-color: #ff5a5f; }
+      .ve-input:focus, .ve-textarea:focus { border-color: #666666; }
       .ve-textarea-small { height: 45px; resize: none; }
       
       .ve-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -530,16 +530,14 @@
           <div class="ve-field">
             <label class="ve-label">TITLE <span id="ai-title-cnt">0/40</span></label>
             <div style="display:flex; gap:5px; margin-bottom:5px;">
-              <button id="ai-fix-title" class="ve-master-btn btn-mini" style="flex:1;">タイトル修正</button>
-              <button id="ai-copy-title" class="ve-master-btn btn-mini" style="width:60px;">コピー</button>
+              <button id="ai-copy-title" class="ve-master-btn btn-mini" style="flex:1;">コピー</button>
             </div>
             <textarea id="ai-title-out" class="ve-textarea ai-output-area" style="height:40px;"></textarea>
           </div>
           <div class="ve-field" style="margin-top:10px;">
             <label class="ve-label">DESCRIPTION</label>
             <div style="display:flex; gap:5px; margin-bottom:5px;">
-              <button id="ai-fix-desc" class="ve-master-btn btn-mini" style="flex:1;">本文修正</button>
-              <button id="ai-copy-desc" class="ve-master-btn btn-mini" style="width:60px;">コピー</button>
+              <button id="ai-copy-desc" class="ve-master-btn btn-mini" style="flex:1;">コピー</button>
             </div>
             <textarea id="ai-desc-out" class="ve-textarea ai-output-area" style="height:100px;"></textarea>
           </div>
@@ -672,20 +670,34 @@
           word_textla: panel.querySelector('#ve-word-output').value
         };
         if (!data.item_name) return alert('商品名を入力してください');
+
+        // --- 先にメルカリ画面へ同期 (爆速化) ---
+        Automator.syncToMercari('input[inputmode="text"]', data.item_name);
+        Automator.syncToMercari([
+          'textarea.merInputNode',
+          '.merInputNode textarea',
+          'textarea[name="description"]'
+        ], data.word_textla);
+
         status.innerText = 'Saving...';
         const res = await Common.API.saveProduct(data);
         if (res.success) {
-          Automator.syncToMercari('input[inputmode="text"]', data.item_name);
-          Automator.syncToMercari([
-            'textarea.merInputNode',
-            '.merInputNode textarea',
-            'textarea[name="description"]'
-          ], data.word_textla);
-          
           // 履歴保存 (新メソッド)
           await Storage.saveHistory(data);
           
           status.innerText = '✅ Saved & Synced!';
+
+          // --- フォームのクリア (保存成功後に実行) ---
+          ['#ve-item-name', '#ve-free-word', '#ve-memo'].forEach(sel => {
+            const el = panel.querySelector(sel);
+            if (el) el.value = '';
+          });
+
+          // 次のIDを取得してUIを更新
+          await StateManager.init();
+          panel.querySelector('#ve-next-id').innerText = StateManager.state.nextId;
+          update();
+
           setTimeout(() => { status.innerText = ''; UI.updateHistoryUI(panel); }, 2000);
         }
       };
@@ -726,17 +738,22 @@
       });
 
       // トグルロジック (新メソッド)
-      launcher.onclick = () => {
-        panel.style.display = 'flex';
-        launcher.style.display = 'none';
-        Storage.setAiPanelState(true);
-      };
+      if (launcher) {
+        launcher.onclick = () => {
+          panel.style.display = 'flex';
+          launcher.style.display = 'none';
+          Storage.setAiPanelState(true);
+        };
+      }
 
-      panel.querySelector('#ai-panel-close').onclick = () => {
-        panel.style.display = 'none';
-        launcher.style.display = 'inline-flex';
-        Storage.setAiPanelState(false);
-      };
+      const closeBtn = panel.querySelector('#ai-panel-close');
+      if (closeBtn) {
+        closeBtn.onclick = () => {
+          panel.style.display = 'none';
+          launcher.style.display = 'inline-flex';
+          Storage.setAiPanelState(false);
+        };
+      }
 
       const runRefine = async (type, btn) => {
         const originalText = btn ? btn.innerText : '';
@@ -748,51 +765,62 @@
         
         if (res.success) {
           const out = panel.querySelector(type === 'title' ? '#ai-title-out' : '#ai-desc-out');
-          out.value = type === 'title' ? res.refined_title : res.refined_text;
-          if (type === 'title') {
-             panel.querySelector('#ai-title-cnt').innerText = `${out.value.length}/40`;
+          if (out) {
+            out.value = type === 'title' ? res.refined_title : res.refined_text;
+            if (type === 'title') {
+              const cntEl = panel.querySelector('#ai-title-cnt');
+              if (cntEl) cntEl.innerText = `${out.value.length}/40`;
+            }
           }
         }
         if (btn) { btn.disabled = false; btn.innerText = originalText; }
       };
 
       const setupCopy = (btnId, outId) => {
-        panel.querySelector('#' + btnId).onclick = () => {
-          const val = panel.querySelector('#' + outId).value;
-          if (!val) return;
-          navigator.clipboard.writeText(val).then(() => {
-            const btn = panel.querySelector('#' + btnId);
-            const old = btn.innerText; btn.innerText = 'OK!';
-            setTimeout(() => { btn.innerText = old; }, 1000);
-          });
+        const btn = panel.querySelector('#' + btnId);
+        if (btn) {
+          btn.onclick = () => {
+            const out = panel.querySelector('#' + outId);
+            const val = out ? out.value : '';
+            if (!val) return;
+            navigator.clipboard.writeText(val).then(() => {
+              const old = btn.innerText; btn.innerText = 'OK!';
+              setTimeout(() => { btn.innerText = old; }, 1000);
+            });
+          };
+        }
+      };
+
+      const fixAllBtn = panel.querySelector('#ai-fix-all');
+      if (fixAllBtn) {
+        fixAllBtn.onclick = async (e) => {
+          e.target.disabled = true; e.target.innerText = '実行中...';
+          await Promise.all([runRefine('title'), runRefine('description')]);
+          e.target.disabled = false; e.target.innerText = '一括AI修正';
         };
-      };
+      }
 
-      panel.querySelector('#ai-fix-all').onclick = async (e) => {
-        e.target.disabled = true; e.target.innerText = '実行中...';
-        await Promise.all([runRefine('title'), runRefine('description')]);
-        e.target.disabled = false; e.target.innerText = '一括AI修正';
-      };
-
-      panel.querySelector('#ai-fix-title').onclick = (e) => runRefine('title', e.target);
-      panel.querySelector('#ai-fix-desc').onclick = (e) => runRefine('description', e.target);
-      
       setupCopy('ai-copy-title', 'ai-title-out');
       setupCopy('ai-copy-desc', 'ai-desc-out');
 
-      panel.querySelector('#ai-transfer').onclick = async (e) => {
-        const title = panel.querySelector('#ai-title-out').value;
-        const description = panel.querySelector('#ai-desc-out').value;
-        
-        if (!title && !description) return alert('修正後の内容がありません');
+      const transferBtn = panel.querySelector('#ai-transfer');
+      if (transferBtn) {
+        transferBtn.onclick = async (e) => {
+          const titleOut = panel.querySelector('#ai-title-out');
+          const descOut = panel.querySelector('#ai-desc-out');
+          const title = titleOut ? titleOut.value : '';
+          const description = descOut ? descOut.value : '';
+          
+          if (!title && !description) return alert('修正後の内容がありません');
 
-        await Automator.queueAiData(title, description);
-        
-        const btn = e.target;
-        const old = btn.innerText;
-        btn.innerText = '✨ 転送予約完了！';
-        setTimeout(() => { btn.innerText = old; }, 2000);
-      };
+          await Automator.queueAiData(title, description);
+          
+          const btn = e.target;
+          const old = btn.innerText;
+          btn.innerText = '✨ 転送予約完了！';
+          setTimeout(() => { btn.innerText = old; }, 2000);
+        };
+      }
     }
   };
 
