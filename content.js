@@ -332,6 +332,15 @@
       .ai-panel-section { background: #222; padding: 10px; border-radius: 8px; border: 1px solid #333; margin-top: 15px; display: none; flex-direction: column; }
       .ai-output-area { background: #000; font-family: monospace; font-size: 12px; margin-top: 8px; }
 
+      .ve-tabs { display: flex; gap: 2px; margin-bottom: 10px; background: #333; padding: 2px; border-radius: 6px; }
+      .ve-tab {
+        flex: 1; padding: 6px; text-align: center; font-size: 11px; font-weight: bold;
+        cursor: pointer; border-radius: 4px; color: #888; transition: all 0.2s;
+      }
+      .ve-tab.active { background: #ff5a5f; color: white; }
+      .ve-tab-content { display: none; }
+      .ve-tab-content.active { display: block; }
+
       #ai-extender-launcher {
         display: inline-flex; align-items: center; gap: 5px;
         background: #333; color: #fff; padding: 5px 12px; border-radius: 20px;
@@ -523,6 +532,23 @@
             <span>✨ AI MASTER CLEANING</span>
             <button class="ve-close" id="ai-panel-close">×</button>
           </div>
+          
+          <div class="ve-tabs">
+            <div class="ve-tab active" data-tab="normal">通常モード</div>
+            <div class="ve-tab" data-tab="vintage">古着モード</div>
+          </div>
+
+          <div id="ve-tab-content-vintage" class="ve-tab-content" style="margin-bottom: 10px;">
+            <div class="ve-field">
+              <label class="ve-label">VINTAGE OPTION</label>
+              <select id="ve-vintage-dropdown" class="ve-select">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+              </select>
+            </div>
+          </div>
+
           <div style="display:flex; gap:10px; margin-bottom:10px;">
             <button id="ai-fix-all" class="ve-master-btn btn-ai" style="flex:1;">一括AI修正</button>
             <button id="ai-transfer" class="ve-master-btn btn-success" style="flex:1;">EasyRegisterへ転送</button>
@@ -726,7 +752,9 @@
     },
 
     setupAiEvents: (panel, launcher) => {
-      // 状態の復元 (新メソッド)
+      let currentMode = 'normal'; // normal or vintage
+
+      // 状態の復元
       Storage.getAiPanelState().then(isOpen => {
         if (isOpen) {
           panel.style.display = 'flex';
@@ -737,7 +765,25 @@
         }
       });
 
-      // トグルロジック (新メソッド)
+      // タブ切り替えロジック
+      const tabs = panel.querySelectorAll('.ve-tab');
+      const vintageContent = panel.querySelector('#ve-tab-content-vintage');
+
+      tabs.forEach(tab => {
+        tab.onclick = () => {
+          tabs.forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+          currentMode = tab.dataset.tab;
+          
+          if (currentMode === 'vintage') {
+            vintageContent.classList.add('active');
+          } else {
+            vintageContent.classList.remove('active');
+          }
+        };
+      });
+
+      // トグルロジック
       if (launcher) {
         launcher.onclick = () => {
           panel.style.display = 'flex';
@@ -760,7 +806,14 @@
         if (btn) { btn.disabled = true; btn.innerText = '実行中...'; }
         
         const pageData = Logic.Scraper.extractPageData();
-        const res = await Common.API.refineContent(type === 'title' ? 'title_refine' : 'description_refine', 
+        
+        // モードに応じたエンドポイントの分岐フック
+        let endpoint = type === 'title' ? 'title_refine' : 'description_refine';
+        if (currentMode === 'vintage') {
+          endpoint += '_v2';
+        }
+
+        const res = await Common.API.refineContent(endpoint, 
           type === 'title' ? { title: pageData.title, brand: pageData.brand } : { text: pageData.description });
         
         if (res.success) {
