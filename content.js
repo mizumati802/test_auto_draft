@@ -538,21 +538,21 @@
             <div class="ve-tab" data-tab="vintage">古着モード</div>
           </div>
 
-          <div id="ve-tab-content-vintage" class="ve-tab-content" style="margin-bottom: 10px;">
+          <div id="ve-tab-content-vintage" class="ve-tab-content" style="margin-bottom: 40px;">
             <div class="ve-field">
-              <label class="ve-label">VINTAGE OPTION</label>
+              <label class="ve-label">年代選択 (ERA)</label>
               <select id="ve-vintage-dropdown" class="ve-select">
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
+                <option value="80~90s">80~90s</option>
+                <option value="90~00s">90~00s</option>
+                <option value="80s">80s</option>
+                <option value="90s">90s</option>
+                <option value="00s">00s</option>
+                <option value="00s~">00s~</option>
+                <option value="10s">10s</option>
               </select>
             </div>
           </div>
 
-          <div style="display:flex; gap:10px; margin-bottom:10px;">
-            <button id="ai-fix-all" class="ve-master-btn btn-ai" style="flex:1;">一括AI修正</button>
-            <button id="ai-transfer" class="ve-master-btn btn-success" style="flex:1;">EasyRegisterへ転送</button>
-          </div>
           <div class="ve-field">
             <label class="ve-label">TITLE <span id="ai-title-cnt">0/40</span></label>
             <div style="display:flex; gap:5px; margin-bottom:5px;">
@@ -566,6 +566,11 @@
               <button id="ai-copy-desc" class="ve-master-btn btn-mini" style="flex:1;">コピー</button>
             </div>
             <textarea id="ai-desc-out" class="ve-textarea ai-output-area" style="height:100px;"></textarea>
+          </div>
+
+          <div style="display:flex; gap:10px; margin-top:15px;">
+            <button id="ai-fix-all" class="ve-master-btn btn-ai" style="flex:1;">一括AI修正</button>
+            <button id="ai-transfer" class="ve-master-btn btn-success" style="flex:1;">EasyRegisterへ転送</button>
           </div>
         `;
         h1.parentNode.insertBefore(panel, launcher.nextSibling);
@@ -819,7 +824,16 @@
         if (res.success) {
           const out = panel.querySelector(type === 'title' ? '#ai-title-out' : '#ai-desc-out');
           if (out) {
-            out.value = type === 'title' ? res.refined_title : res.refined_text;
+            let finalValue = type === 'title' ? res.refined_title : res.refined_text;
+
+            // 古着モードかつタイトルの場合のみ、接頭辞をハードコード結合
+            if (currentMode === 'vintage' && type === 'title') {
+              const eraValue = panel.querySelector('#ve-vintage-dropdown').value;
+              const suffix = ['80~90s', '90s', '80s'].includes(eraValue) ? '_vintage' : '_archive';
+              finalValue = `【${eraValue}${suffix}】${finalValue}`;
+            }
+
+            out.value = finalValue;
             if (type === 'title') {
               const cntEl = panel.querySelector('#ai-title-cnt');
               if (cntEl) cntEl.innerText = `${out.value.length}/40`;
