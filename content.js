@@ -542,13 +542,13 @@
             <div class="ve-field">
               <label class="ve-label">年代選択 (ERA)</label>
               <select id="ve-vintage-dropdown" class="ve-select">
-                <option value="80~90s">80~90s</option>
-                <option value="90~00s">90~00s</option>
-                <option value="80s">80s</option>
-                <option value="90s">90s</option>
-                <option value="00s">00s</option>
-                <option value="00s~">00s~</option>
                 <option value="10s">10s</option>
+                <option value="00s~">00s~</option>
+                <option value="00s" selected>00s</option>
+                <option value="90~00s">90~00s</option>
+                <option value="90s">90s</option>
+                <option value="80~90s">80~90s</option>
+                <option value="80s">80s</option>
               </select>
             </div>
           </div>
