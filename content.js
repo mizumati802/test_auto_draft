@@ -126,6 +126,14 @@
     getAiPanelState: async () => (await Storage._rawGet(['isAiPanelOpen'])).isAiPanelOpen,
     setAiPanelState: (isOpen) => Storage._rawSet({ isAiPanelOpen: isOpen }),
 
+    /** AI修正パネルの選択中タブ (normal / vintage) */
+    getAiActiveTab: async () => (await Storage._rawGet(['aiActiveTab'])).aiActiveTab || 'normal',
+    setAiActiveTab: (tab) => Storage._rawSet({ aiActiveTab: tab }),
+
+    /** 出品補助パネルの選択中テンプレート */
+    getVeActiveTemplate: async () => (await Storage._rawGet(['veActiveTemplate'])).veActiveTemplate || '小物',
+    setVeActiveTemplate: (tpl) => Storage._rawSet({ veActiveTemplate: tpl }),
+
     /** 出品補助パネル（ランチャー）の開閉状態 */
     getVintagePanelState: async () => (await Storage._rawGet(['isPanelOpen'])).isPanelOpen,
     setVintagePanelState: (isOpen) => Storage._rawSet({ isPanelOpen: isOpen }),
@@ -618,10 +626,17 @@
       });
 
       // テンプレートとハッシュタグの初期値をセットし、変更を通知
-      tplSel.value = '小物';
-      hashSel.value = '生活小物';
-      tplSel.dispatchEvent(new Event('change'));
-      hashSel.dispatchEvent(new Event('change'));
+      Storage.getVeActiveTemplate().then(savedTpl => {
+        // 保存されたテンプレートが存在するか確認、なければ「小物」
+        if (StateManager.state.templates[savedTpl]) {
+          tplSel.value = savedTpl;
+        } else {
+          tplSel.value = '小物';
+        }
+        hashSel.value = '生活小物';
+        tplSel.dispatchEvent(new Event('change'));
+        hashSel.dispatchEvent(new Event('change'));
+      });
     },
 
     updateHistoryUI: async (panel) => {
@@ -674,7 +689,15 @@
         panel.querySelector('#ve-word-output').value = rendered;
       };
 
-      panel.querySelectorAll('input, select, textarea').forEach(el => { el.oninput = update; el.onchange = update; });
+      panel.querySelectorAll('input, select, textarea').forEach(el => {
+        el.oninput = update;
+        el.onchange = (e) => {
+          if (el.id === 've-template') {
+            Storage.setVeActiveTemplate(el.value); // 保存
+          }
+          update();
+        };
+      });
       panel.querySelector('.ve-close').onclick = () => {
         panel.style.display = 'none'; document.getElementById(CONFIG.LAUNCHER_ID).style.display = 'flex';
         Storage.setVintagePanelState(false);
@@ -759,7 +782,7 @@
     setupAiEvents: (panel, launcher) => {
       let currentMode = 'normal'; // normal or vintage
 
-      // 状態の復元
+      // 状態の復元 (開閉状態 + タブ)
       Storage.getAiPanelState().then(isOpen => {
         if (isOpen) {
           panel.style.display = 'flex';
@@ -770,15 +793,23 @@
         }
       });
 
-      // タブ切り替えロジック
       const tabs = panel.querySelectorAll('.ve-tab');
       const vintageContent = panel.querySelector('#ve-tab-content-vintage');
 
+      Storage.getAiActiveTab().then(savedTab => {
+        currentMode = savedTab;
+        tabs.forEach(t => {
+          if (t.dataset.tab === savedTab) t.click();
+        });
+      });
+
+      // タブ切り替えロジック
       tabs.forEach(tab => {
         tab.onclick = () => {
           tabs.forEach(t => t.classList.remove('active'));
           tab.classList.add('active');
           currentMode = tab.dataset.tab;
+          Storage.setAiActiveTab(currentMode); // 保存
           
           if (currentMode === 'vintage') {
             vintageContent.classList.add('active');
