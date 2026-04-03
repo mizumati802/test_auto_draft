@@ -1,0 +1,2 @@
+      .ai-panel-section { background: #222; padding: 10px; border-radius: 8px; border: 1px solid #333; margin-top: 15px; display: none; flex-direction: column; }
+      .ai-output-area { background: #000; font-family: monospace; font-size: 12px; margin-top: 8px; }

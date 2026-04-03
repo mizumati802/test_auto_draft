@@ -338,7 +338,7 @@
       .ve-select-dark:hover, .ve-select-dark:focus { border-color: #333 !important; color: #888 !important; }
 
       .ai-panel-section { background: #222; padding: 10px; border-radius: 8px; border: 1px solid #333; margin-top: 15px; display: none; flex-direction: column; }
-      .ai-output-area { background: #000; font-family: monospace; font-size: 12px; margin-top: 8px; }
+      .ai-output-area { background: #000; font-size: 14px; margin-top: 8px; }
 
       .ve-tabs { display: flex; gap: 2px; margin-bottom: 10px; background: #333; padding: 2px; border-radius: 6px; }
       .ve-tab {
@@ -718,6 +718,8 @@
         const status = panel.querySelector('#ve-status');
         const data = {
           item_name: panel.querySelector('#ve-item-name').value,
+          template_name: panel.querySelector('#ve-template').value,
+          cond2: panel.querySelector('#ve-condition').value,
           purchase_price: panel.querySelector('#ve-calc-price').innerText.replace(/[¥,]/g, ''),
           memo: panel.querySelector('#ve-memo').value,
           purchase_id: panel.querySelector('#ve-next-id').innerText,
@@ -866,8 +868,7 @@
 
             out.value = finalValue;
             if (type === 'title') {
-              const cntEl = panel.querySelector('#ai-title-cnt');
-              if (cntEl) cntEl.innerText = `${out.value.length}/40`;
+              out.dispatchEvent(new Event('input'));
             }
           }
         }
@@ -900,6 +901,20 @@
 
       setupCopy('ai-copy-title', 'ai-title-out');
       setupCopy('ai-copy-desc', 'ai-desc-out');
+
+      // リアルタイムカウンターの追加 (40文字制限)
+      const aiTitleOut = panel.querySelector('#ai-title-out');
+      const aiTitleCnt = panel.querySelector('#ai-title-cnt');
+      if (aiTitleOut && aiTitleCnt) {
+        const updateAiCounter = () => {
+          const len = aiTitleOut.value.length;
+          aiTitleCnt.innerText = `${len}/40`;
+          aiTitleCnt.style.color = len > 40 ? '#ff4d4f' : '#888';
+          aiTitleCnt.style.fontWeight = len > 40 ? 'bold' : 'normal';
+        };
+        aiTitleOut.oninput = updateAiCounter;
+        updateAiCounter(); // 初期表示反映
+      }
 
       const transferBtn = panel.querySelector('#ai-transfer');
       if (transferBtn) {
