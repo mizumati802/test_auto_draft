@@ -664,19 +664,24 @@
     },
 
     setupVintageEvents: (panel) => {
-      const update = () => {
+      const update = (e) => {
         const title = panel.querySelector('#ve-item-name').value;
         const freeWord = panel.querySelector('#ve-free-word').value;
         const price = panel.querySelector('#ve-price').value;
         const disc = panel.querySelector('#ve-discount').value;
         const tplName = panel.querySelector('#ve-template').value;
         const condKey = panel.querySelector('#ve-condition').value;
-        const cat = Logic.HashtagSelector.selectByTitle(title);
-        
-        panel.querySelector('#ve-hashtag-rules').value = cat;
+
+        // タイトル変更時のみハッシュタグを自動選択（手動変更を尊重）
+        if (e && e.target && e.target.id === 've-item-name') {
+          const autoCat = Logic.HashtagSelector.selectByTitle(title);
+          panel.querySelector('#ve-hashtag-rules').value = autoCat;
+        }
+
+        const cat = panel.querySelector('#ve-hashtag-rules').value;
         panel.querySelector('#ve-char-cnt').innerText = `${title.length}/40`;
         panel.querySelector('#ve-char-cnt').style.color = title.length > 40 ? '#ff4d4f' : '#888';
-        
+
         const calcPrice = Logic.PriceCalc.calculate(price, disc);
         panel.querySelector('#ve-calc-price').innerText = '¥' + calcPrice.toLocaleString();
 
@@ -689,16 +694,18 @@
         panel.querySelector('#ve-word-output').value = rendered;
       };
 
-      panel.querySelectorAll('input, select, textarea').forEach(el => {
-        el.oninput = update;
+      // プレビュー欄（#ve-word-output）以外を更新トリガーにする
+      ['#ve-item-name', '#ve-free-word', '#ve-price', '#ve-discount', '#ve-template', '#ve-condition', '#ve-hashtag-rules'].forEach(id => {
+        const el = panel.querySelector(id);
+        if (!el) return;
+        el.oninput = (e) => update(e);
         el.onchange = (e) => {
           if (el.id === 've-template') {
             Storage.setVeActiveTemplate(el.value); // 保存
           }
-          update();
+          update(e);
         };
-      });
-      panel.querySelector('.ve-close').onclick = () => {
+      });      panel.querySelector('.ve-close').onclick = () => {
         panel.style.display = 'none'; document.getElementById(CONFIG.LAUNCHER_ID).style.display = 'flex';
         Storage.setVintagePanelState(false);
       };
