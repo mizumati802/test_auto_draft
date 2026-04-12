@@ -242,6 +242,132 @@
     },
 
     /**
+     * オートメーション・ワークフロー制御
+     */
+    Workflow: {
+      state: {
+        mode: "standard", // "vintage" or "standard"
+        rootA: null, // TitleRoot結果
+        rootB: null, // ImageRoot結果
+        purchaseId: null
+      },
+
+      /** Phase 0: アカウント検知 & モード判定 */
+      detectMode: () => {
+        return new Promise((resolve) => {
+          console.log("[Workflow] Phase 0: Detecting Account Mode...");
+          const mypageUrl = "https://jp.mercari.com/mypage";
+          const win = window.open(mypageUrl, "_blank", "width=100,height=100,left=-1000,top=-1000");
+
+          if (!win) {
+            console.warn("[Workflow] Popup blocked. Defaulting to standard mode.");
+            resolve("standard");
+            return;
+          }
+
+          // ウィンドウの読み込みを待機してチェック
+          const checkTimer = setInterval(() => {
+            try {
+              if (win.document && win.document.readyState === "complete") {
+                const h1 = win.document.querySelector("h1");
+                const accountName = h1 ? h1.innerText : "";
+                console.log("[Workflow] Detected Account Name:", accountName);
+
+                const isVintage = accountName.includes("[p/blue]");
+                const mode = isVintage ? "vintage" : "standard";
+                
+                Logic.Workflow.state.mode = mode;
+                console.log(`[Workflow] Mode set to: ${mode.toUpperCase()}`);
+
+                clearInterval(checkTimer);
+                win.close();
+                resolve(mode);
+              }
+            } catch (e) {
+              // クロスドメインエラー等の対策（メルカリドメイン内なら基本OK）
+            }
+          }, 500);
+
+          // タイムアウト（5秒）
+          setTimeout(() => {
+            if (!win.closed) {
+              console.warn("[Workflow] Mode detection timeout. Defaulting to standard.");
+              clearInterval(checkTimer);
+              win.close();
+              resolve("standard");
+            }
+          }, 5000);
+        });
+      },
+
+      /** ステータス表示の更新 */
+      updateStatus: (html, isError = false) => {
+        const popup = document.querySelector('.ve-draft-popup');
+        if (popup) {
+          popup.innerHTML += `<br>${html}`;
+          if (isError) popup.style.borderColor = '#ff5a5f';
+        }
+      },
+
+      /** ワークフロー開始 */
+      start: async () => {
+        console.log("[Workflow] Starting Automation...");
+        
+        // --- Phase 0: モード判定 ---
+        await Logic.Workflow.detectMode();
+
+        // --- Phase 1 & Root A ---
+        const resultA = Logic.DraftChecker.checkDescription();
+        if (!resultA) {
+          console.warn("[Workflow] Root A failed: Elements not found.");
+          return;
+        }
+        
+        Logic.Workflow.state.rootA = resultA;
+        UI.showDraftResult(resultA);
+
+        // 条件チェック: 3行以内 かつ 画像あり の場合のみ次へ
+        if (resultA.isShort && resultA.hasImage) {
+          Logic.Workflow.updateStatus("<span style='color:#4285f4'>⏳ 3秒後に解析を開始します...</span>");
+          setTimeout(() => Logic.Workflow.startBeta(), 3000);
+        } else {
+          Logic.Workflow.updateStatus("<span style='color:#ffc107'>⚠️ 自動化の条件を満たしていません。</span>");
+          setTimeout(() => {
+            const p = document.querySelector('.ve-draft-popup');
+            if (p) p.remove();
+          }, 3000);
+        }
+      },
+
+      /** Root B: 画像解析・ID発行の開始 */
+      startBeta: async () => {
+        console.log("[Workflow] 🚀 Starting Root B (Image Analysis)...");
+        Logic.Workflow.updateStatus("<span style='color:#4285f4'>📡 Root B: ID発行リクエスト送信中...</span>");
+
+        try {
+          // 1. purchase_id の先行取得
+          const response = await fetch("https://database-app-6ms4.onrender.com/api/vintage/master_data");
+          const data = await response.json();
+
+          if (!data.success) throw new Error(data.message || "ID発行に失敗しました");
+
+          Logic.Workflow.state.purchaseId = data.purchase_id;
+          Logic.Workflow.updateStatus(`<span style='color:#34a853'>✅ ID発行成功: ${data.purchase_id}</span>`);
+
+          // 2. 次のステップ（画像解析）への準備
+          setTimeout(() => {
+            Logic.Workflow.updateStatus("<span style='color:#4285f4'>🔍 Vision AI 解析開始...</span>");
+            // 次のステップへ
+          }, 1000);
+
+        } catch (err) {
+          console.error("[Workflow] Root B Error:", err);
+          Logic.Workflow.updateStatus(`<span style='color:#ff5a5f'>❌ エラー: ${err.message}</span>`, true);
+        }
+      }
+    },
+
+    /**
      * 下書きページのチェックロジック
      */
     DraftChecker: {
@@ -465,10 +591,10 @@
       /* Draft Check Popup */
       .ve-draft-popup {
         position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        background: rgba(20, 20, 20, 0.95); color: white; padding: 25px 50px;
+        background: rgba(20, 20, 20, 0.95); color: white; padding: 30px 60px;
         border-radius: 16px; font-size: 20px; font-weight: bold; z-index: 1000001;
         box-shadow: 0 15px 40px rgba(0,0,0,0.6); border: 3px solid #ff5a5f;
-        text-align: center; pointer-events: none; animation: veFadeInOut 3s forwards;
+        text-align: center; pointer-events: none; min-width: 400px; line-height: 1.6;
       }
       @keyframes veFadeInOut {
         0% { opacity: 0; transform: translate(-50%, -40%); }
@@ -533,7 +659,6 @@
       if (!result.isShort) popup.style.borderColor = '#ffc107';
       popup.innerHTML = result.text.replace(/\n/g, '<br>');
       document.body.appendChild(popup);
-      setTimeout(() => popup.remove(), 3100);
     },
 
     /**
@@ -1133,8 +1258,7 @@
       // 下書きページ判定
       if (ctx.url.includes('/sell/draft/')) {
         setTimeout(() => {
-          const result = Logic.DraftChecker.checkDescription();
-          if (result) UI.showDraftResult(result);
+          Logic.Workflow.start();
         }, 3000);
       }
     },
