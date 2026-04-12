@@ -256,7 +256,7 @@
       detectMode: () => {
         return new Promise((resolve) => {
           console.log("[Workflow] Phase 0: Detecting Account Mode...");
-          const mypageUrl = "https://jp.mercari.com/mypage";
+          const mypageUrl = "https://jp.mercari.com/mypage#auto_analyze";
           const win = window.open(mypageUrl, "_blank", "width=100,height=100,left=-1000,top=-1000");
 
           if (!win) {
@@ -341,29 +341,121 @@
 
       /** Root B: 画像解析・ID発行の開始 */
       startBeta: async () => {
-        console.log("[Workflow] 🚀 Starting Root B (Image Analysis)...");
-        Logic.Workflow.updateStatus("<span style='color:#4285f4'>📡 Root B: ID発行リクエスト送信中...</span>");
+        console.log("[Workflow] 🚀 Starting Root B (Unified Pipeline)...");
+        Logic.Workflow.updateStatus("<span style='color:#4285f4'>📡 Root B: ID発行・画像処理中...</span>");
 
         try {
           // 1. purchase_id の先行取得
-          const response = await fetch("https://database-app-6ms4.onrender.com/api/vintage/master_data");
-          const data = await response.json();
+          const idResp = await fetch("https://database-app-6ms4.onrender.com/api/vintage/master_data");
+          const idData = await idResp.json();
+          if (!idData.success) throw new Error("ID発行失敗");
+          Logic.Workflow.state.purchaseId = idData.purchase_id;
+          Logic.Workflow.updateStatus(`<span style='color:#34a853'>✅ ID発行成功: ${idData.purchase_id}</span>`);
 
-          if (!data.success) throw new Error(data.message || "ID発行に失敗しました");
+          // 2. 画像の Base64 変換
+          Logic.Workflow.updateStatus("<span style='color:#4285f4'>📸 サムネイル画像を取得中...</span>");
+          const imgSrc = Logic.DraftChecker.hasThumbnail();
+          if (!imgSrc) throw new Error("画像が見つかりません");
+          
+          const imgBlob = await fetch(imgSrc).then(r => r.blob());
+          const reader = new FileReader();
+          const base64Image = await new Promise((resolve) => {
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(imgBlob);
+          });
 
-          Logic.Workflow.state.purchaseId = data.purchase_id;
-          Logic.Workflow.updateStatus(`<span style='color:#34a853'>✅ ID発行成功: ${data.purchase_id}</span>`);
+          // 3. AI タイトル校正 (JS主導)
+          Logic.Workflow.updateStatus("<span style='color:#4285f4'>✍️ Masterタイトル推論中...</span>");
+          const titleResp = await fetch("https://database-app-6ms4.onrender.com/api/ai/mercari_title_refine", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              text: Logic.Workflow.state.rootA.remarks, // t3 を渡す
+              mode: Logic.Workflow.state.mode 
+            })
+          });
+          const titleData = await titleResp.json();
+          const masterTitle = titleData.success ? titleData.refined_title : Logic.Workflow.state.rootA.remarks;
+          Logic.Workflow.updateStatus(`<span style='color:#34a853'>✅ Masterタイトル確定: ${masterTitle.substring(0, 15)}...</span>`);
 
-          // 2. 次のステップ（画像解析）への準備
+          // 4. 一気通貫解析 ＆ 保存リクエスト
+          Logic.Workflow.updateStatus("<span style='color:#4285f4'>🧠 Vision AI & テンプレート結合中...</span>");
+          const analyzeResp = await fetch("https://database-app-6ms4.onrender.com/api/external/automation/analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              image: base64Image,
+              remarks: Logic.Workflow.state.rootA.remarks,
+              purchase_id: Logic.Workflow.state.purchaseId,
+              purchase_price: Logic.Workflow.state.rootA.parsedTitle.calculatedPrice,
+              title_master: masterTitle,
+              mode: Logic.Workflow.state.mode,
+              category1: "出品理由（仮）" // TODO: EasyRegisterから取得
+            })
+          });
+          const finalResult = await analyzeResp.json();
+          if (!finalResult.success) throw new Error(finalResult.message || "解析に失敗しました");
+
+          Logic.Workflow.state.rootB = finalResult.final_data;
+          Logic.Workflow.updateStatus("<span style='color:#34a853'>✨ オートメーション解析完了！一括注入を開始します...</span>");
+
+          // 5. 最終注入 (Final Injection)
           setTimeout(() => {
-            Logic.Workflow.updateStatus("<span style='color:#4285f4'>🔍 Vision AI 解析開始...</span>");
-            // 次のステップへ
+            Logic.Workflow.injectFinalData(finalResult.final_data);
           }, 1000);
 
         } catch (err) {
           console.error("[Workflow] Root B Error:", err);
           Logic.Workflow.updateStatus(`<span style='color:#ff5a5f'>❌ エラー: ${err.message}</span>`, true);
         }
+      },
+
+      /** 最終データの流し込み (DOM操作) - EasyRegister Refactor版準拠 */
+      injectFinalData: (data) => {
+        console.log("[Workflow] Starting Secure Injection...");
+
+        const syncToMercari = (selectors, value) => {
+          if (!value) return false;
+          const selectorArray = Array.isArray(selectors) ? selectors : [selectors];
+          let input = null;
+          for (const sel of selectorArray) {
+            input = document.querySelector(sel);
+            if (input) break;
+          }
+          if (!input) return false;
+          
+          input.value = value;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        };
+
+        // 1. Title (商品名)
+        const titleInjected = syncToMercari([
+          'input[name="name"]', 
+          '.merInputNode[name="name"]', 
+          '[data-testid="name"] input'
+        ], data.title);
+        if (titleInjected) console.log("✅ Title Injected");
+
+        // 2. Description (商品説明)
+        const descInjected = syncToMercari([
+          'textarea[name="description"]', 
+          'textarea.merInputNode', 
+          '[data-testid="description"] textarea'
+        ], data.description);
+        if (descInjected) console.log("✅ Description Injected");
+
+        if (titleInjected && descInjected) {
+          Logic.Workflow.updateStatus("<span style='color:#34a853'>🚀 すべての項目を確実に流し込みました。</span>");
+        } else {
+          Logic.Workflow.updateStatus("<span style='color:#ffc107'>⚠️ 一部の項目が見つからず、流し込めませんでした。</span>");
+        }
+        
+        // 3秒後にポップアップを消去
+        setTimeout(() => {
+          const p = document.querySelector('.ve-draft-popup');
+          if (p) p.remove();
+        }, 3000);
       }
     },
 
@@ -396,10 +488,15 @@
         const lines = text.split(/\r\n|\r|\n/).filter(line => line.length > 0);
         const count = lines.length;
         const thumbSrc = Logic.DraftChecker.hasThumbnail();
-        
         const titleParsed = Logic.TitleParser.parse(titleInput.value.trim());
 
-        let statusText = count <= 3 ? `✨ 商品説明は3行以内です (${count}行)` : `⚠️ 商品説明が3行を超えています (${count}行)`;
+        // モード表示の構築
+        const mode = Logic.Workflow.state.mode;
+        const modeEmoji = mode === "vintage" ? "🍷" : "📦";
+        const modeName = mode === "vintage" ? "古着モード" : "通常モード";
+        
+        let statusText = `【${modeEmoji} ${modeName}】\n`;
+        statusText += count <= 3 ? `✨ 商品説明は3行以内です (${count}行)` : `⚠️ 商品説明が3行を超えています (${count}行)`;
         statusText += thumbSrc ? "\n📸 画像あり" : "\n🚫 画像なし";
         
         if (titleParsed) {
@@ -1288,7 +1385,9 @@
     },
     init: async () => {
       Common.logger.log("Initializing Master Rebuild v3.0...");
-      await StateManager.init();
+      if (!window.location.hash.includes('auto_analyze')) {
+        await StateManager.init();
+      }
       Core.run();
       new MutationObserver(Core.run).observe(document.body, { childList: true, subtree: true });
     }
