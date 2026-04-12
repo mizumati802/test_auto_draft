@@ -195,6 +195,29 @@
   // =========================================
   const Logic = {
     /**
+     * 下書きページのチェックロジック
+     */
+    DraftChecker: {
+      checkDescription: () => {
+        const textarea = document.querySelector('textarea[name="description"]') || 
+                         document.querySelector('textarea.merInputNode') ||
+                         document.querySelector('[data-testid="description"] textarea');
+        
+        if (!textarea) return null;
+        
+        const text = textarea.value.trim();
+        const lines = text.split(/\r\n|\r|\n/).filter(line => line.length > 0);
+        const count = lines.length;
+        
+        return {
+          isShort: count <= 3,
+          count: count,
+          text: count <= 3 ? `✨ 商品説明は3行以内です (${count}行)` : `⚠️ 商品説明が3行を超えています (${count}行)`
+        };
+      }
+    },
+
+    /**
      * テンプレートのプレースホルダー置換
      */
     TemplateEngine: {
@@ -357,6 +380,21 @@
         border: 1px solid #444; transition: all 0.2s;
       }
       #ai-extender-launcher:hover { background: #444; border-color: #ff5a5f; }
+
+      /* Draft Check Popup */
+      .ve-draft-popup {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: rgba(20, 20, 20, 0.95); color: white; padding: 25px 50px;
+        border-radius: 16px; font-size: 20px; font-weight: bold; z-index: 1000001;
+        box-shadow: 0 15px 40px rgba(0,0,0,0.6); border: 3px solid #ff5a5f;
+        text-align: center; pointer-events: none; animation: veFadeInOut 3s forwards;
+      }
+      @keyframes veFadeInOut {
+        0% { opacity: 0; transform: translate(-50%, -40%); }
+        15% { opacity: 1; transform: translate(-50%, -50%); }
+        85% { opacity: 1; transform: translate(-50%, -50%); }
+        100% { opacity: 0; transform: translate(-50%, -60%); }
+      }
     `
   };
 
@@ -404,6 +442,19 @@
   // 層 6: UI Components (部品層)
   // =========================================
   const UI = {
+    /**
+     * 下書きチェック結果のポップアップ表示
+     */
+    showDraftResult: (result) => {
+      if (!result) return;
+      const popup = document.createElement('div');
+      popup.className = 've-draft-popup';
+      if (!result.isShort) popup.style.borderColor = '#ffc107';
+      popup.innerText = result.text;
+      document.body.appendChild(popup);
+      setTimeout(() => popup.remove(), 3100);
+    },
+
     /**
      * マスター・ボタンファクトリ
      */
@@ -997,6 +1048,14 @@
       StyleModule.inject(ctx);
       UI.createVintagePanel();
       UI.createLauncher();
+
+      // 下書きページ判定
+      if (ctx.url.includes('/sell/draft/')) {
+        setTimeout(() => {
+          const result = Logic.DraftChecker.checkDescription();
+          if (result) UI.showDraftResult(result);
+        }, 5000);
+      }
     },
     ai: (ctx) => {
       Common.logger.log("Entering AI Route");

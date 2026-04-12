@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "EasyRegister Master Refactor",
+  "name": "test_auto_draft",
   "version": "3.0.0",
   "description": "7-layer Monolithic EasyRegister with AI Cleaning",
   "permissions": [
