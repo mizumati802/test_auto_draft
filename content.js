@@ -341,8 +341,8 @@
 
       /** Root B: 画像解析・ID発行の開始 */
       startBeta: async () => {
-        console.log("[Workflow] 🚀 Starting Root B (Unified Pipeline)...");
-        Logic.Workflow.updateStatus("<span style='color:#4285f4'>📡 Root B: ID発行・画像処理中...</span>");
+        console.log("[Workflow] 🚀 Starting Root B (R2-Buffered Pipeline)...");
+        Logic.Workflow.updateStatus("<span style='color:#4285f4'>📡 Root B: 準備中...</span>");
 
         try {
           // 1. purchase_id の先行取得
@@ -352,17 +352,24 @@
           Logic.Workflow.state.purchaseId = idData.purchase_id;
           Logic.Workflow.updateStatus(`<span style='color:#34a853'>✅ ID発行成功: ${idData.purchase_id}</span>`);
 
-          // 2. 画像の Base64 変換
-          Logic.Workflow.updateStatus("<span style='color:#4285f4'>📸 サムネイル画像を取得中...</span>");
+          // 2. 画像の取得と R2 アップロード
+          Logic.Workflow.updateStatus("<span style='color:#4285f4'>📸 サムネイルを R2 へ転送中...</span>");
           const imgSrc = Logic.DraftChecker.hasThumbnail();
           if (!imgSrc) throw new Error("画像が見つかりません");
           
           const imgBlob = await fetch(imgSrc).then(r => r.blob());
-          const reader = new FileReader();
-          const base64Image = await new Promise((resolve) => {
-            reader.onloadend = () => resolve(reader.result);
-            reader.readAsDataURL(imgBlob);
+          const formData = new FormData();
+          formData.append('file', imgBlob, `auto_${Date.now()}.jpg`);
+
+          const uploadResp = await fetch('https://database-app-6ms4.onrender.com/api/upload/google_lens', {
+            method: 'POST',
+            body: formData
           });
+          const uploadData = await uploadResp.json();
+          if (!uploadData.success || !uploadData.url) throw new Error("R2アップロード失敗");
+          
+          const r2Url = uploadData.url;
+          Logic.Workflow.updateStatus("<span style='color:#34a853'>✅ R2バッファリング完了</span>");
 
           // 3. AI タイトル校正 (JS主導)
           Logic.Workflow.updateStatus("<span style='color:#4285f4'>✍️ Masterタイトル推論中...</span>");
@@ -378,26 +385,26 @@
           const masterTitle = titleData.success ? titleData.refined_title : Logic.Workflow.state.rootA.remarks;
           Logic.Workflow.updateStatus(`<span style='color:#34a853'>✅ Masterタイトル確定: ${masterTitle.substring(0, 15)}...</span>`);
 
-          // 4. 一気通貫解析 ＆ 保存リクエスト
+          // 4. 一気通貫解析 ＆ 保存リクエスト (R2 URLを使用)
           Logic.Workflow.updateStatus("<span style='color:#4285f4'>🧠 Vision AI & テンプレート結合中...</span>");
           const analyzeResp = await fetch("https://database-app-6ms4.onrender.com/api/external/automation/analyze", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              image: base64Image,
+              image_url: r2Url, // Base64ではなくURLを送信
               remarks: Logic.Workflow.state.rootA.remarks,
               purchase_id: Logic.Workflow.state.purchaseId,
               purchase_price: Logic.Workflow.state.rootA.parsedTitle.calculatedPrice,
               title_master: masterTitle,
               mode: Logic.Workflow.state.mode,
-              category1: "出品理由（仮）" // TODO: EasyRegisterから取得
+              category1: "出品理由（仮）"
             })
           });
           const finalResult = await analyzeResp.json();
           if (!finalResult.success) throw new Error(finalResult.message || "解析に失敗しました");
 
           Logic.Workflow.state.rootB = finalResult.final_data;
-          Logic.Workflow.updateStatus("<span style='color:#34a853'>✨ オートメーション解析完了！一括注入を開始します...</span>");
+          Logic.Workflow.updateStatus("<span style='color:#34a853'>✨ オートメーション解析完了！</span>");
 
           // 5. 最終注入 (Final Injection)
           setTimeout(() => {
