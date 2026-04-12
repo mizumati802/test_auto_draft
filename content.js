@@ -195,24 +195,105 @@
   // =========================================
   const Logic = {
     /**
+     * Triple-T Parser: 「t1(価格) t2(割引) t3(メモ)」の分解
+     */
+    TitleParser: {
+      parse: (rawTitle) => {
+        if (!rawTitle) return null;
+        
+        // 全角英数字を半角に正規化
+        const normalized = rawTitle.replace(/[！-～]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+        const parts = normalized.trim().split(/\s+/);
+        if (parts.length === 0) return null;
+
+        const result = { t1: null, t2: 0, t3: "", calculatedPrice: null };
+
+        // t1: 最初の要素（数値）
+        const first = parts[0].replace(/[^0-9]/g, '');
+        if (first) result.t1 = parseInt(first, 10);
+
+        // t2: 2番目の要素が「数値のみ」かつ「3文字以内」かチェック
+        if (parts.length >= 2) {
+          const secondRaw = parts[1];
+          const isNumericOnly = /^\d+$/.test(secondRaw);
+          if (isNumericOnly && secondRaw.length <= 3) {
+            result.t2 = parseInt(secondRaw, 10);
+            // t2が確定したので、t3は3番目以降
+            result.t3 = parts.slice(2).join(" ");
+          } else {
+            // t2が条件に合わないので、t2以降すべてがt3
+            result.t3 = parts.slice(1).join(" ");
+          }
+        }
+
+        // 価格計算: t1 から t2% を差し引いた値を「仕入れ価格」として算出
+        if (result.t1 !== null) {
+          const discountAmount = Math.floor(result.t1 * (result.t2 / 100));
+          result.calculatedPrice = result.t1 - discountAmount;
+        }
+
+        console.log("--- [Triple-T Parse Result] ---", {
+          original: rawTitle,
+          normalized: normalized,
+          parsed: result
+        });
+        return result;
+      }
+    },
+
+    /**
      * 下書きページのチェックロジック
      */
     DraftChecker: {
+      /** サムネイル画像（1枚目）の存在を確認 */
+      hasThumbnail: () => {
+        const thumb = document.querySelector('[data-testid="image-list-item-0"] img');
+        return thumb && thumb.src ? thumb.src : null;
+      },
+
+      /** タイトル入力欄の取得 */
+      getTitleInput: () => {
+        return document.querySelector('input[name="name"]') || 
+               document.querySelector('[data-testid="name"] input') ||
+               document.querySelector('input.merInputNode[placeholder*="商品名"]');
+      },
+
       checkDescription: () => {
         const textarea = document.querySelector('textarea[name="description"]') || 
                          document.querySelector('textarea.merInputNode') ||
                          document.querySelector('[data-testid="description"] textarea');
+        const titleInput = Logic.DraftChecker.getTitleInput();
         
-        if (!textarea) return null;
+        if (!textarea || !titleInput) return null;
         
         const text = textarea.value.trim();
         const lines = text.split(/\r\n|\r|\n/).filter(line => line.length > 0);
         const count = lines.length;
+        const thumbSrc = Logic.DraftChecker.hasThumbnail();
         
+        const titleParsed = Logic.TitleParser.parse(titleInput.value.trim());
+
+        let statusText = count <= 3 ? `✨ 商品説明は3行以内です (${count}行)` : `⚠️ 商品説明が3行を超えています (${count}行)`;
+        statusText += thumbSrc ? "\n📸 画像あり" : "\n🚫 画像なし";
+        
+        if (titleParsed) {
+          statusText += `\n🏷️ t1:${titleParsed.t1 || '?'}, t2:${titleParsed.t2 || '0'}, t3:${titleParsed.t3 || '-'}`;
+          if (titleParsed.calculatedPrice !== null) {
+            statusText += `\n💰 仕入れ価格: ¥${titleParsed.calculatedPrice.toLocaleString()}`;
+          }
+        } else {
+          statusText += "\n🚫 タイトル未解析";
+        }
+
         return {
           isShort: count <= 3,
+          hasImage: !!thumbSrc,
+          imageSrc: thumbSrc,
+          titleValue: titleInput.value.trim(),
+          parsedTitle: titleParsed, // パース済みデータ一式
+          remarks: titleParsed ? titleParsed.t3 : "", // 画像解析へのブリッジ用
           count: count,
-          text: count <= 3 ? `✨ 商品説明は3行以内です (${count}行)` : `⚠️ 商品説明が3行を超えています (${count}行)`
+          text: statusText
         };
       }
     },
@@ -450,7 +531,7 @@
       const popup = document.createElement('div');
       popup.className = 've-draft-popup';
       if (!result.isShort) popup.style.borderColor = '#ffc107';
-      popup.innerText = result.text;
+      popup.innerHTML = result.text.replace(/\n/g, '<br>');
       document.body.appendChild(popup);
       setTimeout(() => popup.remove(), 3100);
     },
@@ -1054,7 +1135,7 @@
         setTimeout(() => {
           const result = Logic.DraftChecker.checkDescription();
           if (result) UI.showDraftResult(result);
-        }, 5000);
+        }, 3000);
       }
     },
     ai: (ctx) => {
