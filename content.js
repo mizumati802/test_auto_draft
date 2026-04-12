@@ -321,6 +321,7 @@
       
       .btn-primary { background: #ff5a5f; }
       .btn-success { background: #28a745; }
+      .btn-warning { background: #ffc107; color: #000; font-weight: 800; }
       .btn-ai { background: linear-gradient(135deg, #6a11cb, #2575fc); }
       .btn-mini { padding: 4px 8px; font-size: 11px; }
 
@@ -448,7 +449,7 @@
           </div>
           <div class="ve-field">
             <label class="ve-label">FREE WORD / DESCRIPTION</label>
-            <textarea id="ve-free-word" class="ve-textarea ve-textarea-small" placeholder="サイズ、詳細など..."></textarea>
+            <textarea id="ve-free-word" class="ve-textarea ve-textarea-small" placeholder="サイズ、詳細な など..."></textarea>
           </div>
           <div class="ve-row">
             <div class="ve-field"><label class="ve-label">PRICE</label><input type="number" id="ve-price" class="ve-input"></div>
@@ -474,7 +475,7 @@
           </div>
           <div class="ve-field"><label class="ve-label">HASHTAGS</label><select id="ve-hashtag-rules" class="ve-select-dark"></select></div>
           <div class="ve-field">
-            <label class="ve-label">PREVIEW (WORD)</label>
+            <label class="ve-label">PREVIEW (WORD) <button id="ve-proofread-btn" class="ve-master-btn btn-ai btn-mini" style="display:inline-block; margin-left:10px;">✨ AI校正</button></label>
             <textarea id="ve-word-output" class="ve-textarea" style="height:120px;"></textarea>
             <button id="ve-copy-word-btn" class="ve-master-btn btn-success" style="margin-top:5px;">完成文をコピー</button>
           </div>
@@ -576,9 +577,10 @@
             <textarea id="ai-desc-out" class="ve-textarea ai-output-area" style="height:100px;"></textarea>
           </div>
 
-          <div style="display:flex; gap:10px; margin-top:15px;">
-            <button id="ai-fix-all" class="ve-master-btn btn-ai" style="flex:1;">一括AI修正</button>
-            <button id="ai-transfer" class="ve-master-btn btn-success" style="flex:1;">EasyRegisterへ転送</button>
+          <div style="display:flex; gap:5px; margin-top:15px;">
+            <button id="ai-fix-all" class="ve-master-btn btn-ai" style="flex:1; padding:10px 2px;">✨ 一括修正</button>
+            <button id="ai-proofread-desc" class="ve-master-btn btn-warning" style="flex:1; padding:10px 2px;">📝 AI校正</button>
+            <button id="ai-transfer" class="ve-master-btn btn-success" style="flex:1; padding:10px 2px;">🚀 転送</button>
           </div>
         `;
         h1.parentNode.insertBefore(panel, launcher.nextSibling);
@@ -708,6 +710,26 @@
       });      panel.querySelector('.ve-close').onclick = () => {
         panel.style.display = 'none'; document.getElementById(CONFIG.LAUNCHER_ID).style.display = 'flex';
         Storage.setVintagePanelState(false);
+      };
+
+      panel.querySelector('#ve-proofread-btn').onclick = async (e) => {
+        const textarea = panel.querySelector('#ve-word-output');
+        const text = textarea.value;
+        if (!text) return alert('校正するテキストを入力してください');
+        
+        const btn = e.target;
+        const oldTxt = btn.innerText;
+        btn.disabled = true; btn.innerText = '校正中...';
+        
+        const res = await Common.API.refineContent('test_extension_proofread', { text });
+        if (res.success) {
+          textarea.value = res.refined_text;
+          // ※プレビュー欄を直接書き換えるため、他の入力による update() で上書きされないよう注意
+          btn.innerText = '✨ 校正完了！';
+        } else {
+          btn.innerText = '❌ エラー';
+        }
+        setTimeout(() => { btn.disabled = false; btn.innerText = oldTxt; }, 2000);
       };
 
       panel.querySelector('#ve-fetch-ai-btn').onclick = async () => {
@@ -908,6 +930,28 @@
 
       setupCopy('ai-copy-title', 'ai-title-out');
       setupCopy('ai-copy-desc', 'ai-desc-out');
+
+      const aiProofBtn = panel.querySelector('#ai-proofread-desc');
+      if (aiProofBtn) {
+        aiProofBtn.onclick = async (e) => {
+          const textarea = panel.querySelector('#ai-desc-out');
+          const text = textarea.value;
+          if (!text) return alert('校正するテキストを入力してください');
+
+          const btn = e.target;
+          const oldTxt = btn.innerText;
+          btn.disabled = true; btn.innerText = '校正中...';
+
+          const res = await Common.API.refineContent('test_extension_proofread', { text });
+          if (res.success) {
+            textarea.value = res.refined_text;
+            btn.innerText = '✨ 校正完了！';
+          } else {
+            btn.innerText = '❌ エラー';
+          }
+          setTimeout(() => { btn.disabled = false; btn.innerText = oldTxt; }, 2000);
+        };
+      }
 
       // リアルタイムカウンターの追加 (40文字制限)
       const aiTitleOut = panel.querySelector('#ai-title-out');
