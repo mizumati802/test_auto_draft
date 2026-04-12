@@ -371,7 +371,8 @@
           const r2Url = uploadData.url;
           Logic.Workflow.updateStatus("<span style='color:#34a853'>✅ R2バッファリング完了</span>");
 
-          // 3. AI タイトル校正 (JS主導)
+          /* 
+          // 3. AI タイトル校正 (JS主導) - 順序不備および重複回避のためスキップ
           Logic.Workflow.updateStatus("<span style='color:#4285f4'>✍️ Masterタイトル推論中...</span>");
           const titleResp = await fetch("https://database-app-6ms4.onrender.com/api/ai/mercari_title_refine", {
             method: "POST",
@@ -384,6 +385,7 @@
           const titleData = await titleResp.json();
           const masterTitle = titleData.success ? titleData.refined_title : Logic.Workflow.state.rootA.remarks;
           Logic.Workflow.updateStatus(`<span style='color:#34a853'>✅ Masterタイトル確定: ${masterTitle.substring(0, 15)}...</span>`);
+          */
 
           // 4. 一気通貫解析 ＆ 保存リクエスト (R2 URLを使用)
           Logic.Workflow.updateStatus("<span style='color:#4285f4'>🧠 Vision AI & テンプレート結合中...</span>");
@@ -391,11 +393,11 @@
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              image_url: r2Url, // Base64ではなくURLを送信
+              image_url: r2Url,
               remarks: Logic.Workflow.state.rootA.remarks,
               purchase_id: Logic.Workflow.state.purchaseId,
               purchase_price: Logic.Workflow.state.rootA.parsedTitle.calculatedPrice,
-              title_master: masterTitle,
+              title_master: Logic.Workflow.state.rootA.remarks, // t3 をそのまま渡す
               mode: Logic.Workflow.state.mode,
               category1: "出品理由（仮）"
             })
