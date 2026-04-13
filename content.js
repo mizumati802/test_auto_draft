@@ -1466,72 +1466,102 @@
       UI.createAiPanel();
     },
     listing: async (ctx) => {
-      Common.logger.log("Entering Listing Route (Auto-Pilot Scanning)");
+      Common.logger.log("Entering Listing Route (Visual Bullet Loader)");
       
       const isAutoPilot = window.location.hash.includes('auto_pilot');
-      if (isAutoPilot) {
-        console.log("[Workflow] Auto-Pilot detected. Initializing mode sensing...");
-        await Logic.Workflow.fetchModeActive();
-      }
+      if (!isAutoPilot) return;
 
-      // 内部ロック用フラグ
-      let isWaitingForDone = false; 
+      console.log("[Workflow] Auto-Pilot detected. Initializing mode sensing...");
+      await Logic.Workflow.fetchModeActive();
 
+      // 各行に Bullet ボタンを配置する関数
+      const injectBullets = () => {
+        const mode = localStorage.getItem('ve_auto_mode') || 'standard';
+        const items = document.querySelectorAll('a[href*="/sell/draft/"]');
+        
+        items.forEach(a => {
+          if (a.querySelector('.ve-bullet-btn')) return; // 重複挿入防止
+
+          const bullet = document.createElement('button');
+          bullet.className = 've-bullet-btn';
+          bullet.innerText = '[READY]';
+          bullet.dataset.status = 'ready';
+          
+          // スタイル設定（未処理は緑）
+          Object.assign(bullet.style, {
+            marginLeft: '10px', padding: '4px 8px', borderRadius: '4px',
+            fontSize: '11px', fontWeight: 'bold', border: 'none',
+            cursor: 'pointer', background: '#28a745', color: 'white'
+          });
+
+          bullet.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (bullet.dataset.status === 'done') return;
+
+            const baseHref = a.href.split('#')[0];
+            const bulletUrl = `${baseHref}#auto_analyze&mode=${mode}`;
+            
+            bullet.innerText = '[SHOT]';
+            bullet.dataset.status = 'processing';
+            bullet.style.background = '#007bff'; // 処理中は青
+            Logic.Workflow.state.isProcessing = true;
+
+            console.log(`[Workflow] 🚀 Bullet Shot: ${bulletUrl}`);
+            window.open(bulletUrl, '_blank');
+          };
+
+          // リンクの横、または適切なコンテナ内に挿入
+          const container = a.querySelector('div[class*="merListItem"]') || a;
+          container.appendChild(bullet);
+        });
+      };
+
+      // 初回注入とDOM監視による動的注入
+      injectBullets();
+      const observer = new MutationObserver(injectBullets);
+      observer.observe(document.body, { childList: true, subtree: true });
+
+      // 10秒ごとのポーリング（Pauling）
       Logic.Workflow.state.listingTimer = setInterval(() => {
-        const mode = localStorage.getItem('ve_auto_mode');
-        if (!mode || !isAutoPilot) return;
-
-        const isCompleted = localStorage.getItem('ve_process_completed') === 'true';
-        const lastId = localStorage.getItem('ve_last_processed_id');
-
-        // 1. 子ウィンドウの完了検知（ロック解除）
-        if (isWaitingForDone && isCompleted) {
-          console.log(`[Workflow] ✅ Success Signal Received (ID: ${lastId}). Releasing lock.`);
-          localStorage.removeItem('ve_process_completed');
-          isWaitingForDone = false;
+        if (!isAutoPilot || Logic.Workflow.state.isProcessing) {
+          // 完了信号をチェック
+          const isCompleted = localStorage.getItem('ve_process_completed') === 'true';
+          if (isCompleted) {
+            const lastId = localStorage.getItem('ve_last_processed_id');
+            const bullets = document.querySelectorAll('.ve-bullet-btn[data-status="processing"]');
+            
+            bullets.forEach(b => {
+              const link = b.closest('a');
+              if (!link || !lastId || link.href.includes(lastId)) {
+                console.log(`[Workflow] 🏁 Done signal received for ${lastId}. Marking as COMPLETE_NICE.`);
+                b.innerText = '[COMPLETE_NICE]';
+                b.dataset.status = 'complete_nice';
+                b.style.background = '#fd7e14'; // オレンジを維持
+                Logic.Workflow.state.isProcessing = false;
+                localStorage.removeItem('ve_process_completed');
+              }
+            });
+          }
           return;
         }
 
-        // 2. ロック中でなければ次のアイテムを探して起動
-        if (!isWaitingForDone) {
-          const items = Array.from(document.querySelectorAll('a[href*="/sell/draft/"]'));
-          if (items.length === 0) {
-            console.log("[Workflow] All drafts processed or list empty. Cleaning up...");
-            localStorage.removeItem('ve_auto_mode');
-            localStorage.removeItem('ve_process_completed');
-            localStorage.removeItem('ve_last_processed_id');
-            clearInterval(Logic.Workflow.state.listingTimer);
-            return;
-          }
-
-          // 未処理のアイテムを特定
-          let targetIndex = -1;
-          const target = items.find((a, index) => {
-            const id = a.href.match(/\/sell\/draft\/([^\/&#]+)/)?.[1];
-            if (id && id !== lastId) {
-              targetIndex = index;
-              return true;
+        // 次の READY なボタンを探してクリック
+        const nextBtn = document.querySelector('.ve-bullet-btn[data-status="ready"]');
+        if (nextBtn) {
+          const delay = Math.floor(Math.random() * 3000) + 2000; // 2000-5000ms
+          console.log(`[Workflow] Pauling: Found next bullet. Waiting ${delay/1000}s before shooting...`);
+          
+          setTimeout(() => {
+            // 待機中に状態が変わっていないか最終確認してクリック
+            if (!Logic.Workflow.state.isProcessing && nextBtn.dataset.status === 'ready') {
+              nextBtn.click();
             }
-            return false;
-          });
-
-          if (target) {
-            isWaitingForDone = true; // ロック開始
-            // 待機時間（初回や完了直後は長めに、何もしていない時は短めに）
-            const waitSec = Math.floor(Math.random() * (15)) + 10; 
-            console.log(`[Workflow] Next target: [Index:${targetIndex}] [ID:${target.href.match(/\/sell\/draft\/([^\/&#]+)/)?.[1]}]. Waiting ${waitSec}s...`);
-            
-            setTimeout(() => {
-              const baseHref = target.href.split('#')[0];
-              const bulletUrl = `${baseHref}#auto_analyze&mode=${mode}`;
-              
-              console.log(`[Workflow] 🚀 Launching: ${bulletUrl}`);
-              window.open(bulletUrl, '_blank');
-              // 子ウィンドウが完了フラグを立てるまで isWaitingForDone = true を維持
-            }, waitSec * 1000);
-          }
+          }, delay);
+        } else {
+          console.log("[Workflow] Pauling: All bullets in view are processed.");
         }
-      }, 2000); // 2秒ごとにステータス監視
+      }, 10000);
     },
     cleanup: () => {
       Common.logger.log("Cleaning up for SPA transition");
