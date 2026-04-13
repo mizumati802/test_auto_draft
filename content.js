@@ -1559,7 +1559,18 @@
             }
           }, delay);
         } else {
-          console.log("[Workflow] Pauling: All bullets in view are processed.");
+          const allBullets = document.querySelectorAll('.ve-bullet-btn');
+          const isAllDone = allBullets.length > 0 && Array.from(allBullets).every(b => b.dataset.status === 'complete_nice');
+          
+          if (isAllDone) {
+            console.log("[Workflow] 🏆 ALL COMPLETE! All bullets in view are finished.");
+            
+            // 全完了したらポーリングを停止してクリーンアップ
+            clearInterval(Logic.Workflow.state.listingTimer);
+            Logic.Workflow.state.listingTimer = null;
+          } else {
+            console.log("[Workflow] Pauling: No more unprocessed items in current list view.");
+          }
         }
       }, 10000);
     },
