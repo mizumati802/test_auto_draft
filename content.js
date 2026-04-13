@@ -285,47 +285,29 @@
       },
 
       /**
-       * Phase 0: モード取得（能動的）
-       * 一覧画面(#auto_pilot)でのみ実行。物理的にマイページを開いてモードを確定させる。
+       * Phase 0: モード取得（内部検索）
+       * ページ内の p 要素に 'p/blue' が含まれているかを確認してモードを確定させる。
        */
       fetchModeActive: () => {
         return new Promise((resolve) => {
-          console.log("[Workflow] Phase 0: Actively fetching mode from Mypage...");
-          const mypageUrl = "https://jp.mercari.com/mypage#auto_analyze";
-          const win = window.open(mypageUrl, "_blank", "width=100,height=100,left=-1000,top=-1000");
+          console.log("[Workflow] Phase 0: Actively fetching mode from internal search...");
+          
+          const paragraphs = document.querySelectorAll('p');
+          let hasBlueMark = false;
 
-          if (!win) {
-            console.warn("[Workflow] Popup blocked. Defaulting to standard.");
-            resolve("standard");
-            return;
-          }
-
-          const checkTimer = setInterval(() => {
-            try {
-              if (win.document && win.document.readyState === "complete") {
-                const h1 = win.document.querySelector("h1");
-                const accountName = h1 ? h1.innerText : "";
-                const mode = accountName.includes("[p/blue]") ? "vintage" : "standard";
-                
-                console.log(`[Workflow] Active Detection Success: ${mode.toUpperCase()}`);
-                localStorage.setItem('ve_auto_mode', mode);
-                Logic.Workflow.state.mode = mode;
-
-                clearInterval(checkTimer);
-                win.close();
-                resolve(mode);
-              }
-            } catch (e) {}
-          }, 500);
-
-          setTimeout(() => {
-            if (!win.closed) {
-              console.warn("[Workflow] Active Detection Timeout.");
-              clearInterval(checkTimer);
-              win.close();
-              resolve("standard");
+          paragraphs.forEach((p) => {
+            if (p.textContent.includes("p/blue")) {
+              hasBlueMark = true;
             }
-          }, 5000);
+          });
+
+          const mode = hasBlueMark ? "vintage" : "standard";
+          
+          console.log(`[Workflow] Internal Detection Success: ${mode.toUpperCase()}`);
+          localStorage.setItem('ve_auto_mode', mode);
+          Logic.Workflow.state.mode = mode;
+
+          resolve(mode);
         });
       },
 
@@ -1565,9 +1547,23 @@
           if (isAllDone) {
             console.log("[Workflow] 🏆 ALL COMPLETE! All bullets in view are finished.");
             
+            // Phase 4: Server 5 連携とプロファイル・ブリッジ
+            const currentMode = Logic.Workflow.state.mode; // "vintage" or "standard"
+            const nextSignal = (currentMode === 'vintage') ? '5' : '6';
+            console.log(`[Workflow] 📡 Sending Session Complete Signal (${nextSignal}) for ${currentMode.toUpperCase()} mode to Server 5...`);
+            
+            fetch('http://127.0.0.1:12765/notify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ signal: nextSignal })
+            }).catch(err => console.error("[Workflow] ❌ Failed to notify Server 5:", err));
+
             // 全完了したらポーリングを停止してクリーンアップ
             clearInterval(Logic.Workflow.state.listingTimer);
             Logic.Workflow.state.listingTimer = null;
+            
+            // localStorage のモード情報を削除（次のセッションでの再判定を促す）
+            localStorage.removeItem('ve_auto_mode');
           } else {
             console.log("[Workflow] Pauling: No more unprocessed items in current list view.");
           }

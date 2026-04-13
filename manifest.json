@@ -9,7 +9,8 @@
   "host_permissions": [
     "https://jp.mercari.com/*",
     "https://*.mercari.com/*",
-    "https://database-app-6ms4.onrender.com/*"
+    "https://database-app-6ms4.onrender.com/*",
+    "http://127.0.0.1:12765/*"
   ],
   "content_scripts": [
     {
