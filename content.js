@@ -354,8 +354,8 @@
 
         // 条件チェック: 3行未満 かつ 画像あり の場合のみ解析へ進む
         if (resultA.count < 3 && resultA.hasImage) {
-          Logic.Workflow.updateStatus("<span style='color:#4285f4'>⏳ 3秒後に解析を開始します...</span>");
-          setTimeout(() => Logic.Workflow.startBeta(), 3000);
+          Logic.Workflow.updateStatus("<span style='color:#4285f4'>⏳ 5秒後に解析を開始します...</span>");
+          setTimeout(() => Logic.Workflow.startBeta(), 5000);
         } else {
           // オートメーション中のスキップ処理 (3行以上 または 画像なし)
           if (window.location.hash.includes('auto_analyze')) {
