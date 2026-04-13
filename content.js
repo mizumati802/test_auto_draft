@@ -1452,7 +1452,6 @@
       
       const isAutoPilot = window.location.hash.includes('auto_pilot');
       if (isAutoPilot) {
-        // オートパイロット開始時に「のみ」能動的に取得する
         await Logic.Workflow.fetchModeActive();
       }
 
@@ -1462,51 +1461,58 @@
       const isCompleted = localStorage.getItem('ve_process_completed') === 'true';
       const lastId = localStorage.getItem('ve_last_processed_id');
 
-      // 1. クリーンアップ判定（下書きが1件も無い場合）
-      setTimeout(() => {
+      // 定期的な巡回監視
+      Logic.Workflow.state.listingTimer = setInterval(() => {
+        if (!isAutoPilot || Logic.Workflow.state.isProcessing) return;
+
         const items = Array.from(document.querySelectorAll('a[href*="/sell/draft/"]'));
         if (items.length === 0) {
-          console.log("[Workflow] All drafts processed. Cleaning up automation context.");
+          console.log("[Workflow] All drafts processed. Cleaning up...");
           localStorage.removeItem('ve_auto_mode');
           localStorage.removeItem('ve_process_completed');
           localStorage.removeItem('ve_last_processed_id');
+          clearInterval(Logic.Workflow.state.listingTimer);
           return;
         }
 
-        // 2. コンテキスト伝播（リンクのハッシュ書き換え）
-        console.log(`[Workflow] Mode: ${mode.toUpperCase()} (Pilot: ${isAutoPilot})`);
-        items.forEach(a => {
-          if (!a.href.includes('#auto_analyze')) {
-            a.href += `#auto_analyze&mode=${mode}`;
-          }
-        });
+        const waitSec = isCompleted ? Math.floor(Math.random() * (20)) + 10 : 5;
+        console.log(`[Workflow] Mode: ${mode.toUpperCase()} | Pilot Ready. Waiting ${waitSec}s...`);
+        
+        Logic.Workflow.state.isProcessing = true;
+        localStorage.removeItem('ve_process_completed');
 
-        // 3. オートパイロット（次のアイテムを自動クリック）
-        if (isAutoPilot) {
-          // 完了フラグがある場合は 10〜30秒のランダム待機、そうでない場合は初回起動とみなして5秒待機
-          const waitSec = isCompleted ? Math.floor(Math.random() * (30 - 10 + 1)) + 10 : 5;
-          console.log(`[Workflow] ${isCompleted ? '✅ Last save completed.' : '🚩 Initial cycle.'} Random waiting ${waitSec}s for next draft...`);
-          
-          // フラグをリセット（重複排除用のIDは残す）
-          localStorage.removeItem('ve_process_completed');
-
-          setTimeout(() => {
-            // バリケード：最後に処理した ID と異なる最初の下書きを見つける
-            const nextItem = items.find(a => {
+        setTimeout(() => {
+          const target = Array.from(document.querySelectorAll('a[href*="/sell/draft/"]'))
+            .find(a => {
               const id = a.href.match(/\/sell\/draft\/([^\/&#]+)/)?.[1];
               return id !== lastId;
-            }) || items[0];
+            });
 
-            if (nextItem) {
-              console.log(`[Workflow] 🚀 Clicking next draft: ${nextItem.href}`);
-              nextItem.click();
-            }
-          }, waitSec * 1000);
-        }
-      }, 2000);
+          if (target) {
+            const baseHref = target.href.split('#')[0];
+            const bulletUrl = `${baseHref}#auto_analyze&mode=${mode}`;
+            
+            const proxyLink = document.createElement('a');
+            proxyLink.href = bulletUrl;
+            proxyLink.style.cssText = 'position:fixed; top:0; left:0; width:1px; height:1px; opacity:0; z-index:-1;';
+            document.body.appendChild(proxyLink);
+
+            console.log(`[Workflow] 🚀 Launching Proxy Bullet: ${bulletUrl}`);
+            proxyLink.click();
+            setTimeout(() => proxyLink.remove(), 1000);
+          } else {
+            Logic.Workflow.state.isProcessing = false;
+          }
+        }, waitSec * 1000);
+      }, 1000);
     },
     cleanup: () => {
       Common.logger.log("Cleaning up for SPA transition");
+      if (Logic.Workflow.state.listingTimer) {
+        clearInterval(Logic.Workflow.state.listingTimer);
+        Logic.Workflow.state.listingTimer = null;
+      }
+      Logic.Workflow.state.isProcessing = false;
       UI.remove();
       StyleModule.remove();
     }
