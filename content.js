@@ -33,11 +33,13 @@
       let type = 'unknown';
       if (path.includes('/sell/create') || path.includes('/sell/draft/')) type = 'vintage';
       else if (path.includes('/item/') || path.includes('/products/') || path.includes('/shops/product/')) type = 'ai';
+      else if (path.includes('/mypage/items/drafts')) type = 'listing';
 
       return {
         type,
         isVintage: type === 'vintage',
         isAi: type === 'ai',
+        isListing: type === 'listing',
         url: window.location.href
       };
     },
@@ -247,51 +249,78 @@
     Workflow: {
       state: {
         mode: "standard", // "vintage" or "standard"
+        isInherited: false, // 継承フラグ
         rootA: null, // TitleRoot結果
         rootB: null, // ImageRoot結果
         purchaseId: null
       },
 
-      /** Phase 0: アカウント検知 & モード判定 */
+      /** 
+       * Phase 0: モード判定（受動的）
+       * ドラフト画面で使用。一覧画面が決めた値を解決するだけ。
+       */
       detectMode: () => {
+        // 1. URLハッシュからの継承チェック
+        const hashMatch = window.location.hash.match(/mode=(vintage|standard)/);
+        if (hashMatch) {
+          const mode = hashMatch[1];
+          console.log(`[Workflow] Mode inherited from URL hash: ${mode.toUpperCase()}`);
+          Logic.Workflow.state.mode = mode;
+          Logic.Workflow.state.isInherited = true;
+          return mode;
+        }
+
+        // 2. localStorageからの継承チェック
+        const cachedMode = localStorage.getItem('ve_auto_mode');
+        if (cachedMode) {
+          console.log(`[Workflow] Mode restored from storage: ${cachedMode.toUpperCase()}`);
+          Logic.Workflow.state.mode = cachedMode;
+          Logic.Workflow.state.isInherited = true;
+          return cachedMode;
+        }
+
+        console.log("[Workflow] No mode context found. Using default: STANDARD");
+        Logic.Workflow.state.mode = "standard";
+        return "standard";
+      },
+
+      /**
+       * Phase 0: モード取得（能動的）
+       * 一覧画面(#auto_pilot)でのみ実行。物理的にマイページを開いてモードを確定させる。
+       */
+      fetchModeActive: () => {
         return new Promise((resolve) => {
-          console.log("[Workflow] Phase 0: Detecting Account Mode...");
+          console.log("[Workflow] Phase 0: Actively fetching mode from Mypage...");
           const mypageUrl = "https://jp.mercari.com/mypage#auto_analyze";
           const win = window.open(mypageUrl, "_blank", "width=100,height=100,left=-1000,top=-1000");
 
           if (!win) {
-            console.warn("[Workflow] Popup blocked. Defaulting to standard mode.");
+            console.warn("[Workflow] Popup blocked. Defaulting to standard.");
             resolve("standard");
             return;
           }
 
-          // ウィンドウの読み込みを待機してチェック
           const checkTimer = setInterval(() => {
             try {
               if (win.document && win.document.readyState === "complete") {
                 const h1 = win.document.querySelector("h1");
                 const accountName = h1 ? h1.innerText : "";
-                console.log("[Workflow] Detected Account Name:", accountName);
-
-                const isVintage = accountName.includes("[p/blue]");
-                const mode = isVintage ? "vintage" : "standard";
+                const mode = accountName.includes("[p/blue]") ? "vintage" : "standard";
                 
+                console.log(`[Workflow] Active Detection Success: ${mode.toUpperCase()}`);
+                localStorage.setItem('ve_auto_mode', mode);
                 Logic.Workflow.state.mode = mode;
-                console.log(`[Workflow] Mode set to: ${mode.toUpperCase()}`);
 
                 clearInterval(checkTimer);
                 win.close();
                 resolve(mode);
               }
-            } catch (e) {
-              // クロスドメインエラー等の対策（メルカリドメイン内なら基本OK）
-            }
+            } catch (e) {}
           }, 500);
 
-          // タイムアウト（5秒）
           setTimeout(() => {
             if (!win.closed) {
-              console.warn("[Workflow] Mode detection timeout. Defaulting to standard.");
+              console.warn("[Workflow] Active Detection Timeout.");
               clearInterval(checkTimer);
               win.close();
               resolve("standard");
@@ -313,9 +342,6 @@
       start: async () => {
         console.log("[Workflow] Starting Automation...");
         
-        // --- Phase 0: モード判定 ---
-        await Logic.Workflow.detectMode();
-
         // --- Phase 1 & Root A ---
         const resultA = Logic.DraftChecker.checkDescription();
         if (!resultA) {
@@ -326,16 +352,34 @@
         Logic.Workflow.state.rootA = resultA;
         UI.showDraftResult(resultA);
 
-        // 条件チェック: 3行以内 かつ 画像あり の場合のみ次へ
-        if (resultA.isShort && resultA.hasImage) {
+        // 条件チェック: 3行未満 かつ 画像あり の場合のみ解析へ進む
+        if (resultA.count < 3 && resultA.hasImage) {
           Logic.Workflow.updateStatus("<span style='color:#4285f4'>⏳ 3秒後に解析を開始します...</span>");
           setTimeout(() => Logic.Workflow.startBeta(), 3000);
         } else {
-          Logic.Workflow.updateStatus("<span style='color:#ffc107'>⚠️ 自動化の条件を満たしていません。</span>");
-          setTimeout(() => {
-            const p = document.querySelector('.ve-draft-popup');
-            if (p) p.remove();
-          }, 3000);
+          // オートメーション中のスキップ処理 (3行以上 または 画像なし)
+          if (window.location.hash.includes('auto_analyze')) {
+            const reason = resultA.count >= 3 ? "3行以上の記述があるため" : "画像がないため";
+            Logic.Workflow.updateStatus(`<span style='color:#ffc107'>⏩ ${reason}スキップします...</span>`);
+            
+            // 完了フラグとID記録（次へ進むため）
+            localStorage.setItem('ve_process_completed', 'true');
+            const match = window.location.pathname.match(/\/sell\/draft\/([^\/]+)/);
+            if (match) {
+              localStorage.setItem('ve_last_processed_id', match[1]);
+            }
+
+            // 2秒後に一覧画面（オートパイロット）へ戻る
+            setTimeout(() => {
+              window.location.href = "https://jp.mercari.com/mypage/items/drafts#auto_pilot";
+            }, 2000);
+          } else {
+            Logic.Workflow.updateStatus("<span style='color:#ffc107'>⚠️ 自動化の条件を満たしていません。</span>");
+            setTimeout(() => {
+              const p = document.querySelector('.ve-draft-popup');
+              if (p) p.remove();
+            }, 3000);
+          }
         }
       },
 
@@ -456,11 +500,36 @@
 
         if (titleInjected && descInjected) {
           Logic.Workflow.updateStatus("<span style='color:#34a853'>🚀 すべての項目を確実に流し込みました。</span>");
+          
+          // オートメーションハッシュがある場合のみ自動保存実行
+          if (window.location.hash.includes('auto_analyze')) {
+            Logic.Workflow.updateStatus("<span style='color:#4285f4'>💾 2秒後に「上書き保存」を実行します...</span>");
+            setTimeout(() => {
+              const saveBtn = Array.from(document.querySelectorAll('button[type="button"]'))
+                .find(btn => btn.innerText.includes('上書き保存する'));
+              
+              if (saveBtn) {
+                console.log("[Workflow] Auto-clicking Save Button...");
+                
+                // 完了フラグと重複排除用IDの保存
+                localStorage.setItem('ve_process_completed', 'true');
+                const match = window.location.pathname.match(/\/sell\/draft\/([^\/]+)/);
+                if (match) {
+                  localStorage.setItem('ve_last_processed_id', match[1]);
+                }
+
+                saveBtn.click();
+              } else {
+                console.warn("[Workflow] Save Button not found.");
+                Logic.Workflow.updateStatus("<span style='color:#ff5a5f'>❌ 保存ボタンが見つかりません</span>", true);
+              }
+            }, 2000);
+          }
         } else {
           Logic.Workflow.updateStatus("<span style='color:#ffc107'>⚠️ 一部の項目が見つからず、流し込めませんでした。</span>");
         }
         
-        // 3秒後にポップアップを消去
+        // ポップアップ消去（保存された場合は画面遷移するので自然に消える）
         setTimeout(() => {
           const p = document.querySelector('.ve-draft-popup');
           if (p) p.remove();
@@ -501,10 +570,12 @@
 
         // モード表示の構築
         const mode = Logic.Workflow.state.mode;
+        const isInherited = Logic.Workflow.state.isInherited;
         const modeEmoji = mode === "vintage" ? "🍷" : "📦";
         const modeName = mode === "vintage" ? "古着モード" : "通常モード";
+        const inheritMsg = isInherited ? `\n✅ 継承完了: 継承_モード${mode === "vintage" ? "古着" : "通常"}` : "";
         
-        let statusText = `【${modeEmoji} ${modeName}】\n`;
+        let statusText = `【${modeEmoji} ${modeName}】${inheritMsg}\n`;
         statusText += count <= 3 ? `✨ 商品説明は3行以内です (${count}行)` : `⚠️ 商品説明が3行を超えています (${count}行)`;
         statusText += thumbSrc ? "\n📸 画像あり" : "\n🚫 画像なし";
         
@@ -1361,8 +1432,11 @@
       UI.createVintagePanel();
       UI.createLauncher();
 
-      // 下書きページ判定
-      if (ctx.url.includes('/sell/draft/')) {
+      // 下書きページ且つオートメーションハッシュがある場合のみ自動開始
+      if (ctx.url.includes('/sell/draft/') && window.location.hash.includes('auto_analyze')) {
+        // ドラフト画面では受動的に解決するだけ
+        Logic.Workflow.detectMode();
+        
         setTimeout(() => {
           Logic.Workflow.start();
         }, 3000);
@@ -1372,6 +1446,64 @@
       Common.logger.log("Entering AI Route");
       StyleModule.inject(ctx);
       UI.createAiPanel();
+    },
+    listing: async (ctx) => {
+      Common.logger.log("Entering Listing Route");
+      
+      const isAutoPilot = window.location.hash.includes('auto_pilot');
+      if (isAutoPilot) {
+        // オートパイロット開始時に「のみ」能動的に取得する
+        await Logic.Workflow.fetchModeActive();
+      }
+
+      const mode = localStorage.getItem('ve_auto_mode');
+      if (!mode) return;
+
+      const isCompleted = localStorage.getItem('ve_process_completed') === 'true';
+      const lastId = localStorage.getItem('ve_last_processed_id');
+
+      // 1. クリーンアップ判定（下書きが1件も無い場合）
+      setTimeout(() => {
+        const items = Array.from(document.querySelectorAll('a[href*="/sell/draft/"]'));
+        if (items.length === 0) {
+          console.log("[Workflow] All drafts processed. Cleaning up automation context.");
+          localStorage.removeItem('ve_auto_mode');
+          localStorage.removeItem('ve_process_completed');
+          localStorage.removeItem('ve_last_processed_id');
+          return;
+        }
+
+        // 2. コンテキスト伝播（リンクのハッシュ書き換え）
+        console.log(`[Workflow] Mode: ${mode.toUpperCase()} (Pilot: ${isAutoPilot})`);
+        items.forEach(a => {
+          if (!a.href.includes('#auto_analyze')) {
+            a.href += `#auto_analyze&mode=${mode}`;
+          }
+        });
+
+        // 3. オートパイロット（次のアイテムを自動クリック）
+        if (isAutoPilot) {
+          // 完了フラグがある場合は 10〜30秒のランダム待機、そうでない場合は初回起動とみなして5秒待機
+          const waitSec = isCompleted ? Math.floor(Math.random() * (30 - 10 + 1)) + 10 : 5;
+          console.log(`[Workflow] ${isCompleted ? '✅ Last save completed.' : '🚩 Initial cycle.'} Random waiting ${waitSec}s for next draft...`);
+          
+          // フラグをリセット（重複排除用のIDは残す）
+          localStorage.removeItem('ve_process_completed');
+
+          setTimeout(() => {
+            // バリケード：最後に処理した ID と異なる最初の下書きを見つける
+            const nextItem = items.find(a => {
+              const id = a.href.match(/\/sell\/draft\/([^\/&#]+)/)?.[1];
+              return id !== lastId;
+            }) || items[0];
+
+            if (nextItem) {
+              console.log(`[Workflow] 🚀 Clicking next draft: ${nextItem.href}`);
+              nextItem.click();
+            }
+          }, waitSec * 1000);
+        }
+      }, 2000);
     },
     cleanup: () => {
       Common.logger.log("Cleaning up for SPA transition");
@@ -1391,6 +1523,7 @@
 
       if (ctx.isVintage) Routes.vintage(ctx);
       else if (ctx.isAi) Routes.ai(ctx);
+      else if (ctx.isListing) Routes.listing(ctx);
     },
     init: async () => {
       Common.logger.log("Initializing Master Rebuild v3.0...");
