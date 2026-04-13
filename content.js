@@ -369,10 +369,10 @@
               localStorage.setItem('ve_last_processed_id', match[1]);
             }
 
-            // 2秒後に一覧画面（オートパイロット）へ戻る
+            // 完了通知後にウィンドウを閉じる
             setTimeout(() => {
-              window.location.href = "https://jp.mercari.com/mypage/items/drafts#auto_pilot";
-            }, 2000);
+              window.close();
+            }, 1500);
           } else {
             Logic.Workflow.updateStatus("<span style='color:#ffc107'>⚠️ 自動化の条件を満たしていません。</span>");
             setTimeout(() => {
@@ -519,6 +519,11 @@
                 }
 
                 saveBtn.click();
+                
+                // 保存実行後、1.5秒待機してタブを閉じる（親ウィンドウが巡回を継続するため）
+                setTimeout(() => {
+                  window.close();
+                }, 1500);
               } else {
                 console.warn("[Workflow] Save Button not found.");
                 Logic.Workflow.updateStatus("<span style='color:#ff5a5f'>❌ 保存ボタンが見つかりません</span>", true);
