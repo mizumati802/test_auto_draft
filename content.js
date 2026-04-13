@@ -33,7 +33,7 @@
       let type = 'unknown';
       if (path.includes('/sell/create') || path.includes('/sell/draft/')) type = 'vintage';
       else if (path.includes('/item/') || path.includes('/products/') || path.includes('/shops/product/')) type = 'ai';
-      else if (path.includes('/mypage/items/drafts')) type = 'listing';
+      else if (path.includes('/mypage/drafts')) type = 'listing';
 
       return {
         type,
@@ -1514,16 +1514,16 @@
 
   const Core = {
     lastPath: '',
-    run: () => {
+    run: async () => {
       const ctx = Common.getContext();
       if (ctx.url === Core.lastPath) return;
       Core.lastPath = ctx.url;
 
       Routes.cleanup(); // SPA 遷移時は一旦全破棄
 
-      if (ctx.isVintage) Routes.vintage(ctx);
-      else if (ctx.isAi) Routes.ai(ctx);
-      else if (ctx.isListing) Routes.listing(ctx);
+      if (ctx.isVintage) await Routes.vintage(ctx);
+      else if (ctx.isAi) await Routes.ai(ctx);
+      else if (ctx.isListing) await Routes.listing(ctx);
     },
     init: async () => {
       Common.logger.log("Initializing Master Rebuild v3.0...");
