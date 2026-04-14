@@ -345,18 +345,10 @@
         });
       },
 
-      /** ステータス表示の更新 */
-      updateStatus: (html, isError = false) => {
-        const popup = document.querySelector('.ve-draft-popup');
-        if (popup) {
-          popup.innerHTML += `<br>${html}`;
-          if (isError) popup.style.borderColor = '#ff5a5f';
-        }
-      },
-
       /** ワークフロー開始 */
       start: async () => {
         console.log("[Workflow] Starting Automation...");
+        UI.ensureDraftPopup();
         
         // 1. モード判定が完了するまで待機 (最大10秒)
         let modeWait = 0;
@@ -419,14 +411,14 @@
 
         // 条件チェック: 3行未満 かつ 画像あり の場合のみ解析へ進む
         if (resultA.count < 3 && resultA.hasImage) {
-          Logic.Workflow.updateStatus("<span style='color:#4285f4'>⏳ 5秒後に解析を開始します...</span>");
+          UI.addDraftStatus("<span style='color:#4285f4'>⏳ 5秒後に解析を開始します...</span>");
           setTimeout(() => Logic.Workflow.startBeta(), 5000);
         } else {
           // オートメーション中のスキップ処理 (3行以上 または 画像なし)
           // ライブ参照問題対策: state.initialHash を使用
           if (Logic.Workflow.state.initialHash.includes('auto_analyze')) {
             const reason = resultA.count >= 3 ? "3行以上の記述があるため" : "画像がないため";
-            Logic.Workflow.updateStatus(`<span style='color:#ffc107'>⏩ ${reason}スキップします...</span>`);
+            UI.addDraftStatus(`<span style='color:#ffc107'>⏩ ${reason}スキップします...</span>`);
             
             // 完了フラグとID記録（次へ進むため）
             localStorage.setItem('ve_process_completed', 'true');
@@ -440,11 +432,7 @@
               window.close();
             }, 1500);
           } else {
-            Logic.Workflow.updateStatus("<span style='color:#ffc107'>⚠️ 自動化の条件を満たしていません。</span>");
-            setTimeout(() => {
-              const p = document.querySelector('.ve-draft-popup');
-              if (p) p.remove();
-            }, 3000);
+            UI.addDraftStatus("<span style='color:#ffc107'>⚠️ 自動化の条件を満たしていません。</span>");
           }
         }
       },
@@ -452,7 +440,7 @@
       /** Root B: 画像解析・ID発行の開始 */
       startBeta: async () => {
         console.log("[Workflow] 🚀 Starting Root B (R2-Buffered Pipeline)...");
-        Logic.Workflow.updateStatus("<span style='color:#4285f4'>📡 Root B: 準備中...</span>");
+        UI.addDraftStatus("<span style='color:#4285f4'>📡 Root B: 準備中...</span>");
 
         try {
           // 1. purchase_id の先行取得
@@ -460,10 +448,10 @@
           const idData = await idResp.json();
           if (!idData.success) throw new Error("ID発行失敗");
           Logic.Workflow.state.purchaseId = idData.purchase_id;
-          Logic.Workflow.updateStatus(`<span style='color:#34a853'>✅ ID発行成功: ${idData.purchase_id}</span>`);
+          UI.addDraftStatus(`<span style='color:#34a853'>✅ ID発行成功: ${idData.purchase_id}</span>`);
 
           // 2. 画像の取得と R2 アップロード
-          Logic.Workflow.updateStatus("<span style='color:#4285f4'>📸 サムネイルを R2 へ転送中...</span>");
+          UI.addDraftStatus("<span style='color:#4285f4'>📸 サムネイルを R2 へ転送中...</span>");
           const imgSrc = Logic.DraftChecker.hasThumbnail();
           if (!imgSrc) throw new Error("画像が見つかりません");
           
@@ -479,11 +467,11 @@
           if (!uploadData.success || !uploadData.url) throw new Error("R2アップロード失敗");
           
           const r2Url = uploadData.url;
-          Logic.Workflow.updateStatus("<span style='color:#34a853'>✅ R2バッファリング完了</span>");
+          UI.addDraftStatus("<span style='color:#34a853'>✅ R2バッファリング完了</span>");
 
           /* 
           // 3. AI タイトル校正 (JS主導) - 順序不備および重複回避のためスキップ
-          Logic.Workflow.updateStatus("<span style='color:#4285f4'>✍️ Masterタイトル推論中...</span>");
+          UI.addDraftStatus("<span style='color:#4285f4'>✍️ Masterタイトル推論中...</span>");
           const titleResp = await fetch("https://database-app-6ms4.onrender.com/api/ai/mercari_title_refine", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -494,11 +482,11 @@
           });
           const titleData = await titleResp.json();
           const masterTitle = titleData.success ? titleData.refined_title : Logic.Workflow.state.rootA.remarks;
-          Logic.Workflow.updateStatus(`<span style='color:#34a853'>✅ Masterタイトル確定: ${masterTitle.substring(0, 15)}...</span>`);
+          UI.addDraftStatus(`<span style='color:#34a853'>✅ Masterタイトル確定: ${masterTitle.substring(0, 15)}...</span>`);
           */
 
           // 4. 一気通貫解析 ＆ 保存リクエスト (R2 URLを使用)
-          Logic.Workflow.updateStatus("<span style='color:#4285f4'>🧠 Vision AI & テンプレート結合中...</span>");
+          UI.addDraftStatus("<span style='color:#4285f4'>🧠 Vision AI & テンプレート結合中...</span>");
           const analyzeResp = await fetch("https://database-app-6ms4.onrender.com/api/external/automation/analyze", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -516,7 +504,7 @@
           if (!finalResult.success) throw new Error(finalResult.message || "解析に失敗しました");
 
           Logic.Workflow.state.rootB = finalResult.final_data;
-          Logic.Workflow.updateStatus("<span style='color:#34a853'>✨ オートメーション解析完了！</span>");
+          UI.addDraftStatus("<span style='color:#34a853'>✨ オートメーション解析完了！</span>");
 
           // 5. 最終注入 (Final Injection)
           setTimeout(() => {
@@ -525,7 +513,7 @@
 
         } catch (err) {
           console.error("[Workflow] Root B Error:", err);
-          Logic.Workflow.updateStatus(`<span style='color:#ff5a5f'>❌ エラー: ${err.message}</span>`, true);
+          UI.addDraftStatus(`<span style='color:#ff5a5f'>❌ エラー: ${err.message}</span>`, true);
         }
       },
 
@@ -565,46 +553,50 @@
         if (descInjected) console.log("✅ Description Injected");
 
         if (titleInjected && descInjected) {
-          Logic.Workflow.updateStatus("<span style='color:#34a853'>🚀 すべての項目を確実に流し込みました。</span>");
+          UI.addDraftStatus("<span style='color:#34a853'>🚀 すべての項目を確実に流し込みました。</span>");
           
           // オートメーションハッシュがある場合のみ自動保存実行
           if (window.location.hash.includes('auto_analyze')) {
-            Logic.Workflow.updateStatus("<span style='color:#4285f4'>💾 2秒後に「上書き保存」を実行します...</span>");
+            UI.addDraftStatus("<span style='color:#4285f4'>💾 5秒後に「上書き保存」を実行します...</span>");
             setTimeout(() => {
-              const saveBtn = Array.from(document.querySelectorAll('button[type="button"]'))
-                .find(btn => btn.innerText.includes('上書き保存する'));
+              // ページ最下部へスクロール（ボタンの活性化と検知を確実にするため）
+              window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
               
-              if (saveBtn) {
-                console.log("[Workflow] Auto-clicking Save Button...");
+              // 少し待ってからボタンを再探索
+              setTimeout(() => {
+                // 第一優先: button[type="button"] かつ テキスト一致
+                // ガードレール: 「上書き保存する」テキストを持つすべての button
+                const saveBtn = Array.from(document.querySelectorAll('button[type="button"]'))
+                  .find(btn => btn.innerText.trim() === '上書き保存する') ||
+                  Array.from(document.querySelectorAll('button'))
+                  .find(btn => btn.innerText.includes('上書き保存する'));
                 
-                // 完了フラグと重複排除用IDの保存
-                localStorage.setItem('ve_process_completed', 'true');
-                const match = window.location.pathname.match(/\/sell\/draft\/([^\/]+)/);
-                if (match) {
-                  localStorage.setItem('ve_last_processed_id', match[1]);
-                }
+                if (saveBtn) {
+                  console.log("[Workflow] Auto-clicking Save Button...");
+                  
+                  // 完了フラグと重複排除用IDの保存
+                  localStorage.setItem('ve_process_completed', 'true');
+                  const match = window.location.pathname.match(/\/sell\/draft\/([^\/]+)/);
+                  if (match) {
+                    localStorage.setItem('ve_last_processed_id', match[1]);
+                  }
 
-                saveBtn.click();
-                
-                // 保存実行後、1.5秒待機してタブを閉じる（親ウィンドウが巡回を継続するため）
-                setTimeout(() => {
-                  window.close();
-                }, 1500);
-              } else {
-                console.warn("[Workflow] Save Button not found.");
-                Logic.Workflow.updateStatus("<span style='color:#ff5a5f'>❌ 保存ボタンが見つかりません</span>", true);
-              }
-            }, 2000);
+                  saveBtn.click();
+                  
+                  // 保存実行後、1.5秒待機してタブを閉じる
+                  setTimeout(() => {
+                    window.close();
+                  }, 1500);
+                } else {
+                  console.warn("[Workflow] Save Button not found.");
+                  UI.addDraftStatus("<span style='color:#ff5a5f'>❌ 保存ボタンが見つかりません</span>", true);
+                }
+              }, 500); // スクロール後の短い待機
+            }, 5000);
           }
         } else {
-          Logic.Workflow.updateStatus("<span style='color:#ffc107'>⚠️ 一部の項目が見つからず、流し込めませんでした。</span>");
+          UI.addDraftStatus("<span style='color:#ffc107'>⚠️ 一部の項目が見つからず、流し込めませんでした。</span>");
         }
-        
-        // ポップアップ消去（保存された場合は画面遷移するので自然に消える）
-        setTimeout(() => {
-          const p = document.querySelector('.ve-draft-popup');
-          if (p) p.remove();
-        }, 3000);
       }
     },
 
@@ -835,21 +827,6 @@
         border: 1px solid #444; transition: all 0.2s;
       }
       #ai-extender-launcher:hover { background: #444; border-color: #ff5a5f; }
-
-      /* Draft Check Popup */
-      .ve-draft-popup {
-        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-        background: rgba(20, 20, 20, 0.95); color: white; padding: 30px 60px;
-        border-radius: 16px; font-size: 20px; font-weight: bold; z-index: 1000001;
-        box-shadow: 0 15px 40px rgba(0,0,0,0.6); border: 3px solid #ff5a5f;
-        text-align: center; pointer-events: none; min-width: 400px; line-height: 1.6;
-      }
-      @keyframes veFadeInOut {
-        0% { opacity: 0; transform: translate(-50%, -40%); }
-        15% { opacity: 1; transform: translate(-50%, -50%); }
-        85% { opacity: 1; transform: translate(-50%, -50%); }
-        100% { opacity: 0; transform: translate(-50%, -60%); }
-      }
     `
   };
 
@@ -898,15 +875,50 @@
   // =========================================
   const UI = {
     /**
-     * 下書きチェック結果のポップアップ表示
+     * ポップアップの存在を保証し、最前面に維持する
+     */
+    ensureDraftPopup: () => {
+      let popup = document.querySelector('.ve-draft-popup');
+      
+      if (!popup) {
+        popup = document.createElement('div');
+        popup.className = 've-draft-popup';
+        // インラインスタイルで確実に中央・最前面に固定
+        Object.assign(popup.style, {
+          position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+          backgroundColor: 'rgba(20, 20, 20, 0.95)', color: 'white', padding: '30px 60px',
+          borderRadius: '16px', fontSize: '20px', fontWeight: 'bold', zIndex: '2147483647',
+          boxShadow: '0 15px 40px rgba(0,0,0,0.6)', border: '3px solid #ff5a5f',
+          textAlign: 'center', pointerEvents: 'none', minWidth: '400px', lineHeight: '1.6'
+        });
+        popup.innerHTML = "⏳ 自動解析準備中...";
+        document.body.appendChild(popup);
+        Common.logger.log("Draft Popup Created (Inline Styles)");
+      } else if (!document.body.contains(popup)) {
+        // すでに存在するが DOM から切り離されている場合に再接続
+        document.body.appendChild(popup);
+        Common.logger.log("Draft Popup Re-Attached");
+      }
+      return popup;
+    },
+
+    /**
+     * 解析結果の反映
      */
     showDraftResult: (result) => {
       if (!result) return;
-      const popup = document.createElement('div');
-      popup.className = 've-draft-popup';
-      if (!result.isShort) popup.style.borderColor = '#ffc107';
+      const popup = UI.ensureDraftPopup();
+      if (!result.isShort) popup.style.borderColor = '#ffc107'; // 警告時はオレンジ
       popup.innerHTML = result.text.replace(/\n/g, '<br>');
-      document.body.appendChild(popup);
+    },
+
+    /**
+     * ステータスメッセージの追加
+     */
+    addDraftStatus: (html, isError = false) => {
+      const popup = UI.ensureDraftPopup();
+      popup.innerHTML += `<div style="margin-top:10px; font-size:16px; font-weight:normal; border-top:1px solid #444; padding-top:10px;">${html}</div>`;
+      if (isError) popup.style.borderColor = '#ff5a5f';
     },
 
     /**
@@ -1504,8 +1516,9 @@
       UI.createLauncher();
 
       // 下書きページ且つオートメーションハッシュがある場合のみ自動開始
-      // SPAによるハッシュ消失対策のため、ctx.url (snapshot) を使用
       if (ctx.url.includes('/sell/draft/') && ctx.url.includes('auto_analyze')) {
+        UI.ensureDraftPopup();
+
         const mode = Logic.Workflow.detectMode();
         
         // 解析開始のスケジューリング
@@ -1669,7 +1682,14 @@
     lastPath: '',
     run: async () => {
       const ctx = Common.getContext();
+      
+      // オート解析モードなら常にポップアップの存在を確認 (SPA再描画対策)
+      if (ctx.url.includes('auto_analyze')) {
+        UI.ensureDraftPopup();
+      }
+
       if (ctx.url === Core.lastPath) return;
+      
       Core.lastPath = ctx.url;
 
       Routes.cleanup(); // SPA 遷移時は一旦全破棄
@@ -1684,7 +1704,10 @@
         await StateManager.init();
       }
       Core.run();
-      new MutationObserver(Core.run).observe(document.body, { childList: true, subtree: true });
+      // SPAの再描画対策として常時監視
+      new MutationObserver(() => {
+        Core.run();
+      }).observe(document.body, { childList: true, subtree: true });
     }
   };
 
