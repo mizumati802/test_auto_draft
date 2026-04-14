@@ -409,10 +409,51 @@
         Logic.Workflow.state.rootA = resultA;
         UI.showDraftResult(resultA);
 
-        // 条件チェック: 3行未満 かつ 画像あり の場合のみ解析へ進む
+        // 全解析・DB保存スキップフロー (テストモード)
         if (resultA.count < 3 && resultA.hasImage) {
-          UI.addDraftStatus("<span style='color:#4285f4'>⏳ 5秒後に解析を開始します...</span>");
-          setTimeout(() => Logic.Workflow.startBeta(), 5000);
+          UI.addDraftStatus("<span style='color:#ffc107'>⏩ 画像解析テストにつきスキップ (Title変更のみ)...</span>");
+
+          // 1. タイトル入力
+          const titleInput = Logic.DraftChecker.getTitleInput();
+          if (titleInput) {
+            titleInput.value = "テストにつきスキップ";
+            titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+            console.log("✅ Title Injected: テストにつきスキップ");
+          }
+
+          // 2. オートメーションハッシュがある場合のみ自動保存実行
+          if (Logic.Workflow.state.initialHash.includes('auto_analyze')) {
+            UI.addDraftStatus("<span style='color:#4285f4'>💾 3秒後に「上書き保存」を実行します...</span>");
+            setTimeout(() => {
+              // ページ最下部へスクロール
+              window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+              
+              setTimeout(() => {
+                const saveBtn = Array.from(document.querySelectorAll('button'))
+                  .find(btn => btn.innerText.includes('上書き保存する'));
+                
+                if (saveBtn) {
+                  console.log("[Workflow] Auto-clicking Save Button...");
+                  
+                  // 完了フラグとID記録 (オートパイロット継続用)
+                  localStorage.setItem('ve_process_completed', 'true');
+                  const match = window.location.pathname.match(/\/sell\/draft\/([^\/]+)/);
+                  if (match) {
+                    localStorage.setItem('ve_last_processed_id', match[1]);
+                  }
+
+                  saveBtn.click();
+                  
+                  // 保存完了後のクローズ
+                  setTimeout(() => {
+                    window.close();
+                  }, 1500);
+                } else {
+                  UI.addDraftStatus("<span style='color:#ff5a5f'>❌ 保存ボタン未検出</span>", true);
+                }
+              }, 1000);
+            }, 3000);
+          }
         } else {
           // オートメーション中のスキップ処理 (3行以上 または 画像なし)
           // ライブ参照問題対策: state.initialHash を使用
@@ -439,14 +480,10 @@
 
       /** Root B: 画像解析・ID発行の開始 */
       startBeta: async () => {
-        console.log("[Workflow] 🚀 Starting Root B (R2-Buffered Pipeline)...");
-        UI.addDraftStatus("<span style='color:#4285f4'>📡 Root B: 準備中...</span>");
+        console.log("[Workflow] 🚀 Starting Root B (Skip Mode)...");
+        UI.addDraftStatus("<span style='color:#ffc107'>⏩ 画像解析テストにつきスキップ...</span>");
 
-        // オート保存スケジューラーを独立して起動 (Orchestrator)
-        if (window.location.hash.includes('auto_analyze')) {
-          Logic.Workflow.autoSaveScheduler();
-        }
-
+        /* 全解析・DB保存ロジックを一時停止
         try {
           // 1. purchase_id の先行取得
           const idResp = await fetch("https://database-app-6ms4.onrender.com/api/vintage/master_data");
@@ -474,22 +511,6 @@
           const r2Url = uploadData.url;
           UI.addDraftStatus("<span style='color:#34a853'>✅ R2バッファリング完了</span>");
 
-          /* 
-          // 3. AI タイトル校正 (JS主導) - 順序不備および重複回避のためスキップ
-          UI.addDraftStatus("<span style='color:#4285f4'>✍️ Masterタイトル推論中...</span>");
-          const titleResp = await fetch("https://database-app-6ms4.onrender.com/api/ai/mercari_title_refine", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
-              text: Logic.Workflow.state.rootA.remarks, // t3 を渡す
-              mode: Logic.Workflow.state.mode 
-            })
-          });
-          const titleData = await titleResp.json();
-          const masterTitle = titleData.success ? titleData.refined_title : Logic.Workflow.state.rootA.remarks;
-          UI.addDraftStatus(`<span style='color:#34a853'>✅ Masterタイトル確定: ${masterTitle.substring(0, 15)}...</span>`);
-          */
-
           // 4. 一気通貫解析 ＆ 保存リクエスト (R2 URLを使用)
           UI.addDraftStatus("<span style='color:#4285f4'>🧠 Vision AI & テンプレート結合中...</span>");
           const analyzeResp = await fetch("https://database-app-6ms4.onrender.com/api/external/automation/analyze", {
@@ -511,65 +532,16 @@
           Logic.Workflow.state.rootB = finalResult.final_data;
           UI.addDraftStatus("<span style='color:#34a853'>✨ オートメーション解析完了！</span>");
 
+          // 5. 最終注入 (Final Injection)
+          setTimeout(() => {
+            Logic.Workflow.injectFinalData(finalResult.final_data);
+          }, 1000);
+
         } catch (err) {
           console.error("[Workflow] Root B Error:", err);
           UI.addDraftStatus(`<span style='color:#ff5a5f'>❌ エラー: ${err.message}</span>`, true);
         }
-      },
-
-      /** 保存実行のオーケストレーター */
-      autoSaveScheduler: async () => {
-        console.log("[Scheduler] Waiting for analysis data (rootB)...");
-        
-        // 1. 解析データ(rootB)が届くのを待つ (最大120秒に延長)
-        const startTime = Date.now();
-        while (!Logic.Workflow.state.rootB) {
-          if (Date.now() - startTime > 120000) {
-            console.error("[Scheduler] Timeout waiting for rootB (2min)");
-            return;
-          }
-          await new Promise(r => setTimeout(r, 500));
-        }
-
-        console.log("[Scheduler] Data received. Starting injection...");
-        
-        // 2. 最終注入を実行 (成否に関わらず保存へ進む)
-        Logic.Workflow.injectFinalData(Logic.Workflow.state.rootB);
-
-        // 3. 注入後の安定時間を確保 (3秒)
-        console.log("[Scheduler] Waiting for DOM stability (3s)...");
-        await new Promise(r => setTimeout(r, 3000));
-
-        // 4. 保存実行フェーズ (さらに2秒待機して確実性を高める)
-        console.log("[Scheduler] Preparing to save (2s)...");
-        await new Promise(r => setTimeout(r, 2000));
-
-        // ページ最下部へスクロール
-        window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-        await new Promise(r => setTimeout(r, 500));
-
-        // 保存ボタン探索とクリック
-        const saveBtn = Array.from(document.querySelectorAll('button'))
-          .find(btn => btn.innerText.includes('上書き保存する'));
-        
-        if (saveBtn) {
-          console.log("[Scheduler] Save Button found, clicking...");
-          
-          // 完了フラグの保存
-          localStorage.setItem('ve_process_completed', 'true');
-          const match = window.location.pathname.match(/\/sell\/draft\/([^\/]+)/);
-          if (match) {
-            localStorage.setItem('ve_last_processed_id', match[1]);
-          }
-
-          saveBtn.click();
-          
-          // 1.5秒待機して閉じる
-          setTimeout(() => { window.close(); }, 1500);
-        } else {
-          console.warn("[Scheduler] Save Button not found.");
-          UI.addDraftStatus("<span style='color:#ff5a5f'>❌ 保存ボタンが見つかりません</span>", true);
-        }
+        */
       },
 
       /** 最終データの流し込み (DOM操作) - EasyRegister Refactor版準拠 */
@@ -609,6 +581,46 @@
 
         if (titleInjected && descInjected) {
           UI.addDraftStatus("<span style='color:#34a853'>🚀 すべての項目を確実に流し込みました。</span>");
+          
+          // オートメーションハッシュがある場合のみ自動保存実行
+          if (window.location.hash.includes('auto_analyze')) {
+            UI.addDraftStatus("<span style='color:#4285f4'>💾 5秒後に「上書き保存」を実行します...</span>");
+            setTimeout(() => {
+              // ページ最下部へスクロール（ボタンの活性化と検知を確実にするため）
+              window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+              
+              // 少し待ってからボタンを再探索
+              setTimeout(() => {
+                // 第一優先: button[type="button"] かつ テキスト一致
+                // ガードレール: 「上書き保存する」テキストを持つすべての button
+                const saveBtn = Array.from(document.querySelectorAll('button[type="button"]'))
+                  .find(btn => btn.innerText.trim() === '上書き保存する') ||
+                  Array.from(document.querySelectorAll('button'))
+                  .find(btn => btn.innerText.includes('上書き保存する'));
+                
+                if (saveBtn) {
+                  console.log("[Workflow] Auto-clicking Save Button...");
+                  
+                  // 完了フラグと重複排除用IDの保存
+                  localStorage.setItem('ve_process_completed', 'true');
+                  const match = window.location.pathname.match(/\/sell\/draft\/([^\/]+)/);
+                  if (match) {
+                    localStorage.setItem('ve_last_processed_id', match[1]);
+                  }
+
+                  saveBtn.click();
+                  
+                  // 保存実行後、1.5秒待機してタブを閉じる
+                  setTimeout(() => {
+                    window.close();
+                  }, 1500);
+                } else {
+                  console.warn("[Workflow] Save Button not found.");
+                  UI.addDraftStatus("<span style='color:#ff5a5f'>❌ 保存ボタンが見つかりません</span>", true);
+                }
+              }, 500); // スクロール後の短い待機
+            }, 5000);
+          }
         } else {
           UI.addDraftStatus("<span style='color:#ffc107'>⚠️ 一部の項目が見つからず、流し込めませんでした。</span>");
         }
