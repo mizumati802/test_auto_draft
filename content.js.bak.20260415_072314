@@ -25,13 +25,6 @@
       error: (msg, err) => console.error(`%c[VE-Master Error] ${msg}`, "color: #ff0000; font-weight: bold;", err)
     },
 
-    fixedDelay: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
-
-    jitterDelay: (min, max) => {
-      const ms = Math.floor(Math.random() * (max - min + 1)) + min;
-      return Common.fixedDelay(ms);
-    },
-
     /**
      * 現在のページコンテキストの特定
      */
@@ -108,6 +101,30 @@
           return { success: false };
         }
       }
+    },
+
+    // --- ディレイ・ユーティリティ ---
+
+    /** 【固定待機】技術的な DOM 安定化・ポーリング専用。揺らぎなし。 */
+    sleep: (ms) => new Promise(res => setTimeout(res, ms)),
+
+    /** 【人間模倣待機】操作間・項目間・保存前など「人が迷う時間」専用。必ず範囲指定。 */
+    humanDelay: (min = 150, max = 450) => {
+      const ms = Math.floor(Math.random() * (max - min + 1)) + min;
+      return Common.sleep(ms);
+    },
+
+    /** 【疑似入力】focus → 待機 → 代入 → イベント発火 → 待機 → blur のサイクル */
+    smartInject: async (element, value) => {
+      if (!element || value == null) return false;
+      element.focus();
+      await Common.humanDelay(100, 300);
+      element.value = value;
+      element.dispatchEvent(new Event('input',  { bubbles: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true }));
+      await Common.humanDelay(200, 600);
+      element.blur();
+      return true;
     }
   };
 
@@ -361,7 +378,7 @@
         let modeWait = 0;
         while (Logic.Workflow.state.mode === "standard" && !localStorage.getItem('ve_auto_mode') && modeWait < 20) {
           console.log("[Workflow] Waiting for mode detection to complete...");
-          await Common.fixedDelay(500);
+          await new Promise(r => setTimeout(r, 500));
           modeWait++;
         }
 
@@ -379,7 +396,7 @@
             elementsReady = true;
             break;
           }
-          await Common.fixedDelay(500);
+          await new Promise(r => setTimeout(r, 500));
           elementWait++;
         }
 
@@ -419,8 +436,7 @@
         // 条件チェック: 3行未満 かつ 画像あり の場合のみ解析へ進む
         if (resultA.count < 3 && resultA.hasImage) {
           UI.addDraftStatus("<span style='color:#4285f4'>⏳ 5秒後に解析を開始します...</span>");
-          await Common.fixedDelay(5000);
-          Logic.Workflow.startBeta();
+          setTimeout(() => Logic.Workflow.startBeta(), 5000);
         } else {
           // オートメーション中のスキップ処理 (3行以上 または 画像なし)
           // ライブ参照問題対策: state.initialHash を使用
@@ -482,6 +498,21 @@
           const r2Url = uploadData.url;
           UI.addDraftStatus("<span style='color:#34a853'>✅ R2バッファリング完了</span>");
 
+          /* 
+          // 3. AI タイトル校正 (JS主導) - 順序不備および重複回避のためスキップ
+          UI.addDraftStatus("<span style='color:#4285f4'>✍️ Masterタイトル推論中...</span>");
+          const titleResp = await fetch("https://database-app-6ms4.onrender.com/api/ai/mercari_title_refine", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+              text: Logic.Workflow.state.rootA.remarks, // t3 を渡す
+              mode: Logic.Workflow.state.mode 
+            })
+          });
+          const titleData = await titleResp.json();
+          const masterTitle = titleData.success ? titleData.refined_title : Logic.Workflow.state.rootA.remarks;
+          UI.addDraftStatus(`<span style='color:#34a853'>✅ Masterタイトル確定: ${masterTitle.substring(0, 15)}...</span>`);
+          */
 
           // 4. 一気通貫解析 ＆ 保存リクエスト (R2 URLを使用)
           UI.addDraftStatus("<span style='color:#4285f4'>🧠 Vision AI & テンプレート結合中...</span>");
@@ -521,7 +552,7 @@
             console.error("[Scheduler] Timeout waiting for rootB (2min)");
             return;
           }
-          await Common.fixedDelay(500);
+          await Common.sleep(500); // 技術的ポーリング: 固定
         }
 
         console.log("[Scheduler] Data received. Starting injection...");
@@ -529,17 +560,17 @@
         // 2. 最終注入を実行 (成否に関わらず保存へ進む)
         await Logic.Workflow.injectFinalData(Logic.Workflow.state.rootB);
 
-        // 3. 注入後の安定時間を確保 (3秒)
+        // 3. 注入後の安定時間を確保 (DOM 安定化: 固定)
         console.log("[Scheduler] Waiting for DOM stability (3s)...");
-        await Common.fixedDelay(3000);
+        await Common.sleep(3000);
 
-        // 4. 保存実行フェーズ (さらに2秒待機して確実性を高める)
-        console.log("[Scheduler] Preparing to save (2s)...");
-        await Common.jitterDelay(1500, 2500);
+        // 4. 保存実行フェーズ (人間がフォームを確認しボタンへ向かう時間: 揺らぎあり)
+        console.log("[Scheduler] Preparing to save (human-mimicked delay)...");
+        await Common.humanDelay(1500, 2500);
 
         // ページ最下部へスクロール
         window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-        await Common.fixedDelay(500);
+        await Common.sleep(500); // スクロール完了待機: 固定
 
         // 保存ボタン探索とクリック
         const saveBtn = Array.from(document.querySelectorAll('button'))
@@ -557,8 +588,8 @@
 
           saveBtn.click();
           
-          // 1.5秒待機して閉じる
-          await Common.fixedDelay(1500);
+          // タブを閉じる前の待機 (技術的: 固定)
+          await Common.sleep(1500);
           window.close();
         } else {
           console.warn("[Scheduler] Save Button not found.");
@@ -568,61 +599,39 @@
 
       /** 最終データの流し込み (DOM操作) - EasyRegister Refactor版準拠 */
       injectFinalData: async (data) => {
-        console.log("[Workflow] Starting Secure Injection...");
+        console.log("[Workflow] Starting Human-Mimicked Injection...");
 
         const findEl = (selectors) => {
-          const selectorArray = Array.isArray(selectors) ? selectors : [selectors];
-          for (const sel of selectorArray) {
+          const arr = Array.isArray(selectors) ? selectors : [selectors];
+          for (const sel of arr) {
             const el = document.querySelector(sel);
             if (el) return el;
           }
           return null;
         };
 
-        const syncToMercari = (selectors, value) => {
-          if (!value) return false;
-          const selectorArray = Array.isArray(selectors) ? selectors : [selectors];
-          let input = null;
-          for (const sel of selectorArray) {
-            input = document.querySelector(sel);
-            if (input) break;
-          }
-          if (!input) return false;
-          
-          input.value = value;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          return true;
-        };
-
         // 1. Title (商品名)
-        const titleSelectors = [
+        const titleEl = findEl([
           'input[name="name"]',
           '.merInputNode[name="name"]',
           '[data-testid="name"] input'
-        ];
-        const titleEl = findEl(titleSelectors);
-        if (titleEl) {
-          titleEl.focus();
-          await Common.jitterDelay(1000, 3000);
-        }
-        const titleInjected = syncToMercari(titleSelectors, data.title);
-        if (titleInjected) console.log("✅ Title Injected");
+        ]);
+        const titleOk = await Common.smartInject(titleEl, data.title);
+        if (titleOk) console.log("✅ Title Injected");
 
-        // 2. Description (商品説明)
-        const descSelectors = [
+        // 2. 視線移動の間 (人間模倣: 揺らぎあり)
+        await Common.humanDelay(500, 1000);
+
+        // 3. Description (商品説明)
+        const descEl = findEl([
           'textarea[name="description"]',
           'textarea.merInputNode',
           '[data-testid="description"] textarea'
-        ];
-        const descEl = findEl(descSelectors);
-        if (descEl) {
-          descEl.focus();
-          await Common.jitterDelay(1000, 3000);
-        }
-        const descInjected = syncToMercari(descSelectors, data.description);
-        if (descInjected) console.log("✅ Description Injected");
+        ]);
+        const descOk = await Common.smartInject(descEl, data.description);
+        if (descOk) console.log("✅ Description Injected");
 
-        if (titleInjected && descInjected) {
+        if (titleOk && descOk) {
           UI.addDraftStatus("<span style='color:#34a853'>🚀 すべての項目を確実に流し込みました。</span>");
         } else {
           UI.addDraftStatus("<span style='color:#ffc107'>⚠️ 一部の項目が見つからず、流し込めませんでした。</span>");
@@ -1553,13 +1562,14 @@
         
         // 解析開始のスケジューリング
         const startAutomation = async () => {
-          // 要件: モード判定に5秒、開始までに2~3秒のランダムディレイ
+          // モード安定化待機 (技術的: 固定)
           console.log("[Workflow] Step 1: Waiting 5 seconds for mode stability...");
-          await Common.fixedDelay(5000);
+          await Common.sleep(5000);
 
-          const randomDelay = Math.floor(Math.random() * 1001) + 2000; // 2000ms - 3000ms
+          // 開始タイミングの揺らぎ (人間模倣: 揺らぎあり)
+          const randomDelay = Math.floor(Math.random() * 1001) + 2000;
           console.log(`[Workflow] Step 2: Random delay of ${randomDelay}ms before start...`);
-          await Common.fixedDelay(randomDelay);
+          await Common.humanDelay(2000, 3000);
 
           console.log("[Workflow] Step 3: Launching parser check...");
           Logic.Workflow.start();
@@ -1657,11 +1667,11 @@
         // 次の READY なボタンを探してクリック
         const nextBtn = document.querySelector('.ve-bullet-btn[data-status="ready"]');
         if (nextBtn) {
-          const delay = Math.floor(Math.random() * 3000) + 2000; // 2000-5000ms
-          console.log(`[Workflow] Pauling: Found next bullet. Waiting ${delay/1000}s before shooting...`);
-          
+          // 人間模倣: 次弾を撃つまでのランダム待機 (揺らぎあり)
           (async () => {
-            await Common.fixedDelay(delay);
+            const delay = Math.floor(Math.random() * 3000) + 2000;
+            console.log(`[Workflow] Pauling: Found next bullet. Waiting ${delay/1000}s before shooting...`);
+            await Common.humanDelay(2000, 5000);
             // 待機中に状態が変わっていないか最終確認してクリック
             if (!Logic.Workflow.state.isProcessing && nextBtn.dataset.status === 'ready') {
               nextBtn.click();
