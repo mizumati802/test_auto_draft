@@ -250,6 +250,7 @@
       state: {
         mode: "standard", // "vintage" or "standard"
         isInherited: false, // 継承フラグ
+        initialHash: "", // 起動時のハッシュを保存（SPA正規化対策）
         rootA: null, // TitleRoot結果
         rootB: null, // ImageRoot結果
         purchaseId: null
@@ -260,6 +261,9 @@
        * ドラフト画面で使用。一覧画面が決めた値を解決するだけ。
        */
       detectMode: () => {
+        // 起動時のハッシュをライブ参照問題回避のために保存
+        Logic.Workflow.state.initialHash = window.location.hash;
+
         // 1. URLハッシュからの継承チェック
         const hashMatch = window.location.hash.match(/mode=(vintage|standard)/);
         if (hashMatch) {
@@ -354,17 +358,37 @@
       start: async () => {
         console.log("[Workflow] Starting Automation...");
         
-        // 1. モード判定が完了するまで待機
-        let waitCount = 0;
-        while (Logic.Workflow.state.mode === "standard" && !localStorage.getItem('ve_auto_mode') && waitCount < 20) {
+        // 1. モード判定が完了するまで待機 (最大10秒)
+        let modeWait = 0;
+        while (Logic.Workflow.state.mode === "standard" && !localStorage.getItem('ve_auto_mode') && modeWait < 20) {
           console.log("[Workflow] Waiting for mode detection to complete...");
           await new Promise(r => setTimeout(r, 500));
-          waitCount++;
+          modeWait++;
         }
 
-        // 2. 要素が完全に準備されるまで 10秒間待機
-        console.log("[Workflow] Waiting 10 seconds for elements to stabilize...");
-        await new Promise(r => setTimeout(r, 10000));
+        // 2. 要素（商品名・説明欄）が準備されるまでポーリング待機 (最大5秒)
+        console.log("[Workflow] Polling for essential elements...");
+        let elementWait = 0;
+        let elementsReady = false;
+        while (elementWait < 10) {
+          const titleInput = Logic.DraftChecker.getTitleInput();
+          const textarea = document.querySelector('textarea[name="description"]') || 
+                           document.querySelector('textarea.merInputNode') ||
+                           document.querySelector('[data-testid="description"] textarea');
+          
+          if (titleInput && textarea) {
+            elementsReady = true;
+            break;
+          }
+          await new Promise(r => setTimeout(r, 500));
+          elementWait++;
+        }
+
+        if (!elementsReady) {
+          console.warn("[Workflow] Essential elements not found after polling.");
+        } else {
+          console.log("[Workflow] Elements detected. Proceeding to Parse.");
+        }
 
         // --- Phase 1 & Root A ---
         const resultA = Logic.DraftChecker.checkDescription();
@@ -399,7 +423,8 @@
           setTimeout(() => Logic.Workflow.startBeta(), 5000);
         } else {
           // オートメーション中のスキップ処理 (3行以上 または 画像なし)
-          if (window.location.hash.includes('auto_analyze')) {
+          // ライブ参照問題対策: state.initialHash を使用
+          if (Logic.Workflow.state.initialHash.includes('auto_analyze')) {
             const reason = resultA.count >= 3 ? "3行以上の記述があるため" : "画像がないため";
             Logic.Workflow.updateStatus(`<span style='color:#ffc107'>⏩ ${reason}スキップします...</span>`);
             
@@ -1479,22 +1504,22 @@
       UI.createLauncher();
 
       // 下書きページ且つオートメーションハッシュがある場合のみ自動開始
-      if (ctx.url.includes('/sell/draft/') && window.location.hash.includes('auto_analyze')) {
+      // SPAによるハッシュ消失対策のため、ctx.url (snapshot) を使用
+      if (ctx.url.includes('/sell/draft/') && ctx.url.includes('auto_analyze')) {
         const mode = Logic.Workflow.detectMode();
         
         // 解析開始のスケジューリング
-        const startAutomation = () => {
-          const waitTime = mode === 'standard' ? 5000 : 3000;
-          console.log(`[Workflow] Waiting ${waitTime}ms for ${mode.toUpperCase()} mode...`);
-          
-          setTimeout(() => {
-            if (document.readyState === 'complete') {
-              Logic.Workflow.start();
-            } else {
-              console.log("[Workflow] DOM not ready, waiting for load event...");
-              window.addEventListener('load', () => Logic.Workflow.start(), { once: true });
-            }
-          }, waitTime);
+        const startAutomation = async () => {
+          // 要件: モード判定に5秒、開始までに2~3秒のランダムディレイ
+          console.log("[Workflow] Step 1: Waiting 5 seconds for mode stability...");
+          await new Promise(r => setTimeout(r, 5000));
+
+          const randomDelay = Math.floor(Math.random() * 1001) + 2000; // 2000ms - 3000ms
+          console.log(`[Workflow] Step 2: Random delay of ${randomDelay}ms before start...`);
+          await new Promise(r => setTimeout(r, randomDelay));
+
+          console.log("[Workflow] Step 3: Launching parser check...");
+          Logic.Workflow.start();
         };
 
         startAutomation();
