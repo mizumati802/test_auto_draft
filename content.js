@@ -221,12 +221,13 @@
         const first = parts[0].replace(/[^0-9]/g, '');
         if (first) result.t1 = parseInt(first, 10);
 
-        // t2: 2番目の要素が「数値のみ」かつ「3文字以内」かチェック
+        // t2: 2番目の要素が「数値のみ」かつ「3文字以内」かつ「100以下」かチェック
         if (parts.length >= 2) {
           const secondRaw = parts[1];
           const isNumericOnly = /^\d+$/.test(secondRaw);
-          if (isNumericOnly && secondRaw.length <= 3) {
-            result.t2 = parseInt(secondRaw, 10);
+          const secondNum = parseInt(secondRaw, 10);
+          if (isNumericOnly && secondRaw.length <= 3 && secondNum <= 100) {
+            result.t2 = secondNum;
             // t2が確定したので、t3は3番目以降
             result.t3 = parts.slice(2).join(" ");
           } else {
@@ -260,7 +261,8 @@
         initialHash: "", // 起動時のハッシュを保存（SPA正規化対策）
         rootA: null, // TitleRoot結果
         rootB: null, // ImageRoot結果
-        purchaseId: null
+        purchaseId: null,
+        hasError: false
       },
 
       /** 
@@ -449,6 +451,7 @@
       startBeta: async () => {
         console.log("[Workflow] 🚀 Starting Root B (R2-Buffered Pipeline)...");
         UI.addDraftStatus("<span style='color:#4285f4'>📡 Root B: 準備中...</span>");
+        Logic.Workflow.state.hasError = false;
 
         // オート保存スケジューラーを独立して起動 (Orchestrator)
         if (window.location.hash.includes('auto_analyze')) {
@@ -505,6 +508,7 @@
           UI.addDraftStatus("<span style='color:#34a853'>✨ オートメーション解析完了！</span>");
 
         } catch (err) {
+          Logic.Workflow.state.hasError = true;
           console.error("[Workflow] Root B Error:", err);
           UI.addDraftStatus(`<span style='color:#ff5a5f'>❌ エラー: ${err.message}</span>`, true);
         }
@@ -517,6 +521,10 @@
         // 1. 解析データ(rootB)が届くのを待つ (最大120秒に延長)
         const startTime = Date.now();
         while (!Logic.Workflow.state.rootB) {
+          if (Logic.Workflow.state.hasError) {
+            console.error("[Scheduler] Aborting wait because Root B failed.");
+            return;
+          }
           if (Date.now() - startTime > 120000) {
             console.error("[Scheduler] Timeout waiting for rootB (2min)");
             return;
@@ -579,21 +587,6 @@
           return null;
         };
 
-        const syncToMercari = (selectors, value) => {
-          if (!value) return false;
-          const selectorArray = Array.isArray(selectors) ? selectors : [selectors];
-          let input = null;
-          for (const sel of selectorArray) {
-            input = document.querySelector(sel);
-            if (input) break;
-          }
-          if (!input) return false;
-          
-          input.value = value;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          return true;
-        };
-
         // 1. Title (商品名)
         const titleSelectors = [
           'input[name="name"]',
@@ -605,7 +598,7 @@
           titleEl.focus();
           await Common.jitterDelay(1000, 3000);
         }
-        const titleInjected = syncToMercari(titleSelectors, data.title);
+        const titleInjected = Automator.syncToMercari(titleSelectors, data.title);
         if (titleInjected) console.log("✅ Title Injected");
 
         // 2. Description (商品説明)
@@ -619,7 +612,7 @@
           descEl.focus();
           await Common.jitterDelay(1000, 3000);
         }
-        const descInjected = syncToMercari(descSelectors, data.description);
+        const descInjected = Automator.syncToMercari(descSelectors, data.description);
         if (descInjected) console.log("✅ Description Injected");
 
         if (titleInjected && descInjected) {
@@ -868,15 +861,17 @@
      * メルカリ純正入力欄への物理同期 (複数セレクタ対応)
      */
     syncToMercari: (selectors, value) => {
+      if (!value) return false;
       const selectorArray = Array.isArray(selectors) ? selectors : [selectors];
       let input = null;
       for (const sel of selectorArray) {
         input = document.querySelector(sel);
         if (input) break;
       }
-      if (!input) return;
+      if (!input) return false;
       input.value = value;
       input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
     },
 
     /**
@@ -1641,7 +1636,7 @@
             
             bullets.forEach(b => {
               const link = b.closest('a');
-              if (!link || !lastId || link.href.includes(lastId)) {
+              if (link && lastId && link.href.includes(lastId)) {
                 console.log(`[Workflow] 🏁 Done signal received for ${lastId}. Marking as COMPLETE_NICE.`);
                 b.innerText = '[COMPLETE_NICE]';
                 b.dataset.status = 'complete_nice';
