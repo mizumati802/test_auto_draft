@@ -286,28 +286,58 @@
 
       /**
        * Phase 0: モード取得（内部検索）
-       * ページ内の p 要素に 'p/blue' が含まれているかを確認してモードを確定させる。
+       * 5秒待機後、ページ内の p 要素に 'p/blue' が含まれているかを確認してモードを確定させる。
        */
       fetchModeActive: () => {
         return new Promise((resolve) => {
-          console.log("[Workflow] Phase 0: Actively fetching mode from internal search...");
+          console.log("[Workflow] Phase 0: Waiting 5 seconds before detection...");
           
-          const paragraphs = document.querySelectorAll('p');
-          let hasBlueMark = false;
+          setTimeout(() => {
+            const paragraphs = document.querySelectorAll('p');
+            let hasBlueMark = false;
 
-          paragraphs.forEach((p) => {
-            if (p.textContent.includes("p/blue")) {
-              hasBlueMark = true;
-            }
-          });
+            paragraphs.forEach((p) => {
+              if (p.textContent.includes("p/blue")) {
+                hasBlueMark = true;
+              }
+            });
 
-          const mode = hasBlueMark ? "vintage" : "standard";
-          
-          console.log(`[Workflow] Internal Detection Success: ${mode.toUpperCase()}`);
-          localStorage.setItem('ve_auto_mode', mode);
-          Logic.Workflow.state.mode = mode;
+            const mode = hasBlueMark ? "vintage" : "standard";
+            const modeLabel = mode === "vintage" ? "🍷 古着モード" : "📦 通常モード";
+            const bgColor = mode === "vintage" ? "#800080" : "#006400";
+            
+            console.log(`[Workflow] Internal Detection Success: ${mode.toUpperCase()}`);
+            localStorage.setItem('ve_auto_mode', mode);
+            Logic.Workflow.state.mode = mode;
 
-          resolve(mode);
+            // 判定結果をシンプルに表示
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+              position: fixed;
+              top: 50%;
+              left: 50%;
+              transform: translate(-50%, -50%);
+              padding: 30px 60px;
+              background: ${bgColor};
+              color: white;
+              font-size: 40px;
+              font-weight: bold;
+              border-radius: 12px;
+              z-index: 999999;
+              box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+              pointer-events: none;
+              text-align: center;
+              border: 2px solid white;
+            `;
+            overlay.textContent = modeLabel;
+            document.body.appendChild(overlay);
+
+            // 2秒後に消去して次へ
+            setTimeout(() => {
+              overlay.remove();
+              resolve(mode);
+            }, 2000);
+          }, 5000);
         });
       },
 
@@ -324,12 +354,41 @@
       start: async () => {
         console.log("[Workflow] Starting Automation...");
         
+        // 1. モード判定が完了するまで待機
+        let waitCount = 0;
+        while (Logic.Workflow.state.mode === "standard" && !localStorage.getItem('ve_auto_mode') && waitCount < 20) {
+          console.log("[Workflow] Waiting for mode detection to complete...");
+          await new Promise(r => setTimeout(r, 500));
+          waitCount++;
+        }
+
+        // 2. 要素が完全に準備されるまで 10秒間待機
+        console.log("[Workflow] Waiting 10 seconds for elements to stabilize...");
+        await new Promise(r => setTimeout(r, 10000));
+
         // --- Phase 1 & Root A ---
         const resultA = Logic.DraftChecker.checkDescription();
+        
         if (!resultA) {
-          console.warn("[Workflow] Root A failed: Elements not found.");
+          // 要素が見つからない場合のリロード監視（最大3回）
+          const reloadCount = parseInt(localStorage.getItem('ve_start_reload_count') || '0', 10);
+          const nextCount = reloadCount + 1;
+          
+          if (nextCount < 3) {
+            console.warn(`[Workflow] Elements not found. Reloading... (${nextCount}/3)`);
+            localStorage.setItem('ve_start_reload_count', nextCount.toString());
+            window.location.reload();
+          } else {
+            console.error("[Workflow] Max reloads (3) reached. Closing tab.");
+            localStorage.setItem('ve_start_reload_count', '0'); // リセット
+            window.close();
+          }
           return;
         }
+
+        // 正常に解析ルート（パーサー判定）に入ったため、カウントをリセット
+        localStorage.setItem('ve_start_reload_count', '0');
+        console.log("[Workflow] Parser started successfully. Reload counter reset.");
         
         Logic.Workflow.state.rootA = resultA;
         UI.showDraftResult(resultA);
@@ -1421,10 +1480,9 @@
 
       // 下書きページ且つオートメーションハッシュがある場合のみ自動開始
       if (ctx.url.includes('/sell/draft/') && window.location.hash.includes('auto_analyze')) {
-        // ドラフト画面では受動的に解決するだけ
         const mode = Logic.Workflow.detectMode();
         
-        // 解析開始のスケジューリング（標準モードは5秒、古着モードは3秒待機）
+        // 解析開始のスケジューリング
         const startAutomation = () => {
           const waitTime = mode === 'standard' ? 5000 : 3000;
           console.log(`[Workflow] Waiting ${waitTime}ms for ${mode.toUpperCase()} mode...`);
