@@ -10,9 +10,7 @@
     PANEL_ID: 've-master-panel',
     LAUNCHER_ID: 've-master-launcher',
     CONDITION_MAP: {
-      'noStains': '致命的なダメージではないため「目立った傷や汚れなし」ですが、軽微な使用感（スレ・小キズ・毛玉・やや点シミ・ナイロン革製品のスレ等）や検品の見落としがある場合があります。中古品の特性をご理解ください。',
-      'someWear': '使用感や小傷等の中古品特有の状態（綿製品・ニット類の毛玉、ナイロン・革製品のスレ、アクセサリーの小キズ、やや点シミ、検品の見落とし等）がある場合があります。写真をご確認の上ご購入ください。',
-      'junk': '一部に剥がれや劣化があり、使用感に加えて不具合のあるジャンク品です。修理等を行ってからのご使用をお勧めします。写真をご確認の上ご購入ください。'
+      '': ''
     }
   };
 
@@ -1008,10 +1006,8 @@
             <div class="ve-field"><label class="ve-label">TEMPLATE</label><select id="ve-template" class="ve-select"></select></div>
             <div class="ve-field">
               <label class="ve-label">CONDITION</label>
-              <select id="ve-condition" class="ve-select">
-                <option value="noStains">目立った傷なし</option>
-                <option value="someWear">やや傷汚れ</option>
-                <option value="junk">ジャンク</option>
+              <select id="ve-condition" class="ve-select" disabled>
+                <option value="" selected>未使用</option>
               </select>
             </div>
           </div>
